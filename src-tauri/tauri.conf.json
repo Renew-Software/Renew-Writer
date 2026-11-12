@@ -27,7 +27,7 @@
     "icon": [
       "icons/icon.png"
     ],
-    "category": "Office",
+    "category": "Utiltiy",
     "shortDescription": "Lightweight paginated word processor",
     "longDescription": "R-Writer is a clean, distraction-free, paginated document editor supporting .docx, .odt, and .txt files with live page layout.",
     "linux": {
