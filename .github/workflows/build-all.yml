@@ -43,7 +43,17 @@ jobs:
         shell: bash
         run: |
           mkdir -p src-tauri/icons
-          curl -sL https://raw.githubusercontent.com/tauri-apps/tauri/dev/examples/default/src-tauri/icons/icon.png -o app-icon.png
+          node -e '
+            const https = require("https");
+            const fs = require("fs");
+            const file = fs.createWriteStream("app-icon.png");
+            https.get("https://raw.githubusercontent.com/tauri-apps/tauri/dev/examples/default/src-tauri/icons/icon.png", function(response) {
+              response.pipe(file);
+              file.on("finish", function() {
+                file.close();
+              });
+            });
+          '
           npx --yes @tauri-apps/cli icon app-icon.png
 
       - name: Build Tauri App
