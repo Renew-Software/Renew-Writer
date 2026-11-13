@@ -1,89 +1,57 @@
-name: "Build and Release"
+name: "Publish"
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
     tags:
-      - 'v*' # Triggers a release when pushing a tag like v1.2.0
-  pull_request:
-    branches: [ "main", "master" ]
+      - 'v*'
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    
+  publish-tauri:
     permissions:
       contents: write
-
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
-            target: deb
-            artifact_glob: src-tauri/target/release/bundle/deb/*.deb
-          - os: windows-latest
-            target: msi
-            artifact_glob: src-tauri/target/release/bundle/msi/*.msi
-          - os: macos-latest
-            target: dmg
-            artifact_glob: src-tauri/target/release/bundle/dmg/*.dmg
+          - platform: ubuntu-22_04
+            args: ""
+          - platform: macos-latest
+            args: ""
+          - platform: windows-latest
+            args: ""
 
+    runs-on: ${{ matrix.platform }}
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      # 1. Install Node.js
+      - name: setup node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
-      - name: Install Rust Stable
-        uses: dtolnay/rust-toolchain@stable
+      # 2. Automatically download the full JSZip library before build
+      - name: Download JSZip dependency
+        run: curl -sL https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js -o ui/jszip.min.js
 
-      - name: Install Dependencies (Ubuntu)
-        if: matrix.os == 'ubuntu-22.04'
+      # 3. Install Rust dependencies (Linux system packages required for WebKitGTK / Tauri)
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22_04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: Generate and Verify Tauri Icons
-        shell: bash
-        run: |
-          mkdir -p src-tauri/icons
-          if [ -f logo.png ]; then
-            npx --yes @tauri-apps/cli icon logo.png
-          fi
-          if [ ! -f src-tauri/icons/icon.ico ]; then
-            node -e '
-              const https = require("https");
-              const fs = require("fs");
-              const file = fs.createWriteStream("src-tauri/icons/icon.ico");
-              https.get("https://raw.githubusercontent.com/tauri-apps/tauri/refs/heads/dev/examples/default/src-tauri/icons/icon.ico", (res) => {
-                res.pipe(file);
-              });
-            '
-            sleep 2
-          fi
+      # 4. Setup Rust toolchain
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Build Tauri App (Native CLI)
-        run: npx --yes @tauri-apps/cli build --bundles ${{ matrix.target }}
+      # 5. Build Tauri App
+      - name: Tauri Build
+        uses: tauri-apps/tauri-action@v0.5.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Build Artifacts (For PRs and Commits)
-        uses: actions/upload-artifact@v4
         with:
-          name: r-writer-${{ matrix.target }}
-          path: ${{ matrix.artifact_glob }}
-          if-no-files-found: error
-
-      - name: Upload to GitHub Release (For Version Tags)
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          files: ${{ matrix.artifact_glob }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          args: ${{ matrix.args }}
