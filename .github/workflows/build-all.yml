@@ -12,7 +12,6 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     
-    # REQUIRED: Grants permission to create releases and upload assets
     permissions:
       contents: write
 
@@ -22,13 +21,13 @@ jobs:
         include:
           - os: ubuntu-22.04
             target: deb
-            artifact_glob: src-tauri/target/release/bundle/deb/*
+            artifact_glob: src-tauri/target/release/bundle/deb/*.deb
           - os: windows-latest
             target: msi
-            artifact_glob: src-tauri/target/release/bundle/msi/*
+            artifact_glob: src-tauri/target/release/bundle/msi/*.msi
           - os: macos-latest
             target: dmg
-            artifact_glob: src-tauri/target/release/bundle/dmg/*
+            artifact_glob: src-tauri/target/release/bundle/dmg/*.dmg
 
     steps:
       - name: Checkout Repository
