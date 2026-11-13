@@ -89,6 +89,7 @@ let text = "", pageKey = "A4", fontIdx = 2, size = 14;
 let ranges = [[0,0]], pending = null, curPage = 0, curScale = 1;
 let tas = [], sheets = [], sizeMap = [];
 let modified = false, message = "";
+let savedCaret = null;
 
 const $ = id => document.getElementById(id);
 const pagesEl = $("pages"), scaler = $("scaler"), canvas = $("canvas");
@@ -226,6 +227,108 @@ function rebuildDocumentFromPages(){
   ensureSizeMapLength();
 }
 
+function caretOffsetWithin(root, target, targetOffset){
+  let offset = 0;
+  function walk(node){
+    if(node === target){
+      if(node.nodeType === 3){
+        return offset + Math.min(targetOffset, node.textContent.length);
+      }
+      const children = Array.from(node.childNodes);
+      for(let i=0; i<Math.min(targetOffset, children.length); i++){
+        offset += (children[i].nodeType === 3 ? children[i].textContent.length : 1);
+      }
+      return offset;
+    }
+    if(node.nodeType === 3){
+      offset += node.textContent.length;
+      return null;
+    }
+    if(node.nodeType === 1){
+      if(node.tagName === "BR"){
+        offset += 1;
+        return null;
+      }
+      for(const child of node.childNodes){
+        const res = walk(child);
+        if(res !== null) return res;
+      }
+    }
+    return null;
+  }
+  return walk(root);
+}
+
+function currentCaretPosition(){
+  const sel = window.getSelection();
+  if(!sel || sel.rangeCount === 0) return savedCaret;
+  for(let i=0; i<tas.length; i++){
+    const editor = tas[i];
+    if(!editor.contains(sel.anchorNode)) continue;
+    const local = caretOffsetWithin(editor, sel.anchorNode, sel.anchorOffset);
+    if(local !== null){
+      savedCaret = ranges[i][0] + local;
+      return savedCaret;
+    }
+  }
+  return savedCaret;
+}
+
+function setCaretWithin(root, wantedOffset){
+  const range = document.createRange();
+  let offset = 0;
+  let placed = false;
+  function walk(node){
+    if(placed) return;
+
+    if(node.nodeType === 3){
+      const len = node.textContent.length;
+      if(wantedOffset <= offset + len){
+        range.setStart(node, Math.max(0, wantedOffset - offset));
+        placed = true;
+      } else {
+        offset += len;
+      }
+      return;
+    }
+
+    if(node.nodeType === 1){
+      if(node.tagName === "BR"){
+        if(wantedOffset <= offset){
+          range.setStartBefore(node);
+          placed = true;
+        } else if(wantedOffset <= offset + 1){
+          range.setStartAfter(node);
+          placed = true;
+        } else {
+          offset++;
+        }
+        return;
+      }
+      for(const child of node.childNodes){
+        walk(child);
+        if(placed) return;
+      }
+    }
+  }
+
+  for(const child of root.childNodes){
+    walk(child);
+    if(placed) break;
+  }
+
+  if(!placed){
+    range.selectNodeContents(root);
+    range.collapse(false);
+  } else {
+    range.collapse(true);
+  }
+
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 function render(){
   paginate(); ensureSheets(ranges.length);
   ranges.forEach(([s,e],i)=>{
@@ -235,26 +338,34 @@ function render(){
     if(tas[i].innerHTML !== html) tas[i].innerHTML = html;
   });
   layoutScale();
+
   if(pending){
     const g=Math.min(pending.g,text.length);
     let p=ranges.findIndex(([s,e])=>g>=s&&g<e); if(p<0) p=ranges.length-1;
     if(pending.prefer!=null && pending.prefer<ranges.length && g>=ranges[pending.prefer][0] && g<=ranges[pending.prefer][1]) p=pending.prefer;
     const local=g-ranges[p][0];
     pending=null;
-    tas[p].focus();
-    curPage=p;
+
     const ta=tas[p];
+    ta.focus();
+    curPage=p;
     const d=dims(); const lhs=d.lh*curScale;
-    const y=ta.getBoundingClientRect().top+(rowOf(ta.innerText || ta.textContent, local)+1)*lhs;
+    const y=ta.getBoundingClientRect().top+(rowOf(ta.innerText || ta.textContent, Math.min(local, (ta.innerText || ta.textContent).length))+1)*lhs;
     const barH=document.querySelector(".top").offsetHeight, stH=$("status").offsetHeight;
+
+    setCaretWithin(ta, Math.max(0, Math.min(local, ta.textContent.length)));
+    savedCaret = g;
+
     if(y-lhs<barH+8) window.scrollBy(0,y-lhs-barH-40);
     else if(y>innerHeight-stH-8) window.scrollBy(0,y-innerHeight+stH+40);
   }
+
   updateStatus();
 }
 
 function onInput(i){
   const [s,e]=ranges[i];
+  const caretBefore = currentCaretPosition();
   const oldText = text.slice(s,e);
   const oldSizes = sizeMap.slice(s,e);
   const parsed = readPageSizes(tas[i], size);
@@ -278,7 +389,9 @@ function onInput(i){
   sizeMap = before.concat(pageSizes, after);
   ensureSizeMapLength();
   modified = true;
-  pending={g:s+pageText.length, prefer:i};
+
+  const targetCaret = caretBefore != null ? caretBefore : s + pageText.length;
+  pending={g:targetCaret, prefer:i};
   render();
 }
 
@@ -399,7 +512,7 @@ async function buildOdt(){
 /* ---------- toolbar actions ---------- */
 let afterAsk=null;
 function guard(fn){ if(!modified){ fn(); return; } afterAsk=fn; $("ask").style.display="flex"; }
-$("askYes").onclick=()=>{ $("ask").style.display="none"; const f=afterAsk; afterAsk=null; if(f) f(); };
+$("askYes").onclick=()=>{ $("ask").display="none"; const f=afterAsk; afterAsk=null; if(f) f(); };
 $("askNo").onclick=()=>{ $("ask").style.display="none"; afterAsk=null; };
 
 function openDlg(){ $("fileIn").value=""; $("fileIn").click(); }
@@ -473,7 +586,8 @@ $("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
 $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
 $("sizeIn").addEventListener("input",e=>{ const v=Math.max(8,Math.min(48,+e.target.value||14)); size=v; keep(); });
 function keep(){
-  const g=tas[curPage] ? ranges[curPage][0] + (tas[curPage].innerText || tas[curPage].textContent || "").length : 0;
+  const caret = currentCaretPosition();
+  const g = caret != null ? caret : (tas[curPage] ? ranges[curPage][0] + (tas[curPage].innerText || tas[curPage].textContent || "").length : 0);
   pending={g, prefer:curPage};
   render();
 }
