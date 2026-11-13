@@ -617,7 +617,7 @@ function onKey(ev,i){
 
 /* ---------- file formats ---------- */
 function esc(s){
-  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;");
 }
 
 function docxText(xml){
@@ -699,6 +699,10 @@ async function buildDocx(){
     pos++;
   }
 
+  if (typeof JSZip === 'undefined') {
+    throw new Error("JSZip library is not loaded. Ensure jszip.min.js is in the ui/ folder.");
+  }
+
   const zip=new JSZip();
   zip.file("[Content_Types].xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
   zip.file("_rels/.rels",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
@@ -726,6 +730,11 @@ function odtLine(line){
 
 async function buildOdt(){
   const body=text.split("\n").map(line=>'<text:p text:style-name="P1">'+odtLine(line)+'</text:p>').join("");
+  
+  if (typeof JSZip === 'undefined') {
+    throw new Error("JSZip library is not loaded. Ensure jszip.min.js is in the ui/ folder.");
+  }
+
   const zip=new JSZip();
   zip.file("mimetype","application/vnd.oasis.opendocument.text",{compression:"STORE"});
   zip.file("META-INF/manifest.xml",'<?xml version="1.0" encoding="UTF-8"?>\n<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:media-type="application/vnd.oasis.opendocument.text" manifest:full-path="/"/><manifest:file-entry manifest:media-type="text/xml" manifest:full-path="content.xml"/></manifest:manifest>');
@@ -788,6 +797,7 @@ function triggerDownload(blob,filename){
   const a=document.createElement("a");
   a.href=url;
   a.download=filename;
+  a.style.display="none";
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -811,6 +821,7 @@ async function save(fmt){
     modified=false;
     message="Saved "+fname;
   }catch(err){
+    console.error("Save error:", err);
     message="Save failed: "+(err&&err.message?err.message:err);
   }
   updateStatus();
