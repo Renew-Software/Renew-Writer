@@ -47,19 +47,25 @@ jobs:
             const https = require("https");
             const fs = require("fs");
             const file = fs.createWriteStream("app-icon.png");
-            https.get("https://cdn.jsdelivr.net/gh/tauri-apps/tauri@tauri-v1.5.0/examples/default/src-tauri/icons/icon.png", function(response) {
+            https.get("https://dummyimage.com/512x512/2563eb/ffffff.png&text=App", function(response) {
+              if (response.statusCode !== 200) {
+                console.error("Failed to download image, status code:", response.statusCode);
+                process.exit(1);
+              }
               response.pipe(file);
               file.on("finish", function() {
                 file.close();
-                // Verify it is a valid PNG
                 const buffer = fs.readFileSync("app-icon.png");
                 const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
                 if (!buffer.subarray(0, 8).equals(pngHeader)) {
                   console.error("Error: Downloaded file is not a valid PNG!");
                   process.exit(1);
                 }
-                console.log("Valid PNG icon downloaded successfully.");
+                console.log("Valid 512x512 PNG icon downloaded successfully.");
               });
+            }).on("error", function(err) {
+              console.error("Error downloading:", err.message);
+              process.exit(1);
             });
           '
           npx --yes @tauri-apps/cli icon app-icon.png
