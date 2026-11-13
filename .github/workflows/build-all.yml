@@ -1,0 +1,69 @@
+name: "Publish"
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*' # Trigger on version tags like v1.0.0 (optional)
+  workflow_dispatch: # Allows manual triggering from the GitHub Actions tab
+
+jobs:
+  build-release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--bundles dmg"
+          - platform: windows-latest
+            args: "--bundles msi"
+          - platform: ubuntu-22.04
+            args: "--bundles deb"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 1. Install Node.js (Required for frontend dependencies if you have them)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 2. Download jszip.min.js into your ui folder automatically during CI
+      - name: Download jszip dependency
+        run: |
+          mkdir -p ui
+          curl -sL https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js -o ui/jszip.min.js
+        shell: bash
+
+      # 3. Install Rust toolchain
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # 4. Install Linux-specific system dependencies (Only runs on ubuntu runner)
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      # 5. Build and package using Tauri Action v2
+      - name: Run Tauri Action
+        uses: tauri-apps/tauri-action@v0.5.0 # Ensure you are using v2-compatible tauri-action
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
