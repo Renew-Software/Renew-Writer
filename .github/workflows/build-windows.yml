@@ -14,18 +14,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js (For Tauri CLI)
         uses: actions/setup-node@v4
         with:
           node-version: 18
 
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Frontend Dependencies
-        run: |
-          cd ui
-          npm install
 
       - name: Auto-generate Tauri Icons
         shell: bash
