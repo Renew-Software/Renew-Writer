@@ -1,20 +1,17 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
+  "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "productName": "R-Writer",
-  "version": "1.1.0",
-  "identifier": "io.github.rwriter.app",
+  "version": "1.0.0",
+  "identifier": "io.github.rwriter.desktop",
   "build": {
     "frontendDist": "../ui"
   },
   "app": {
-    "withGlobalTauri": true,
     "windows": [
       {
         "title": "R-Writer",
-        "width": 1024,
-        "height": 800,
-        "resizable": true,
-        "fullscreen": false
+        "width": 1200,
+        "height": 800
       }
     ],
     "security": {
@@ -23,14 +20,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
-    "category": "Utility",
-    "shortDescription": "Lightweight paginated word processor",
-    "longDescription": "R-Writer is a clean, distraction-free, paginated document editor supporting .docx, .odt, and .txt files with live page layout.",
-    "linux": {
-      "deb": {
-        "depends": []
-      }
-    }
+    "targets": "all",
+    "icon": []
   }
 }
