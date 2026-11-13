@@ -43,8 +43,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p src-tauri/icons
-          # Runs Tauri's tool using your custom logo file from the root directory
+          # Generate icons from your custom logo.png
           npx --yes @tauri-apps/cli icon logo.png
+          
+          # Fallback safeguard: if tauri icon didn't name it icon.ico directly, ensure it exists
+          if [ ! -f src-tauri/icons/icon.ico ] && [ -f src-tauri/icons/32x32.png ]; then
+            cp src-tauri/icons/32x32.png src-tauri/icons/icon.ico
+          fi
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0.5.2
