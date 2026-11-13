@@ -193,7 +193,9 @@ function ensureSheets(n){
     sh.style.width=d.pw+"px"; sh.style.height=d.ph+"px"; sh.style.marginBottom=GAP+"px";
     const ta=tas[i];
     ta.style.left=M+"px"; ta.style.top=M+"px"; ta.style.width=d.cw+"px"; ta.style.height=d.ch+"px";
-    ta.style.fontFamily=FONTS[fontIdx][1]; ta.style.lineHeight=d.lh+"px";
+    ta.style.fontFamily=FONTS[fontIdx][1];
+    ta.style.fontSize=size+"px";
+    ta.style.lineHeight=d.lh+"px";
   });
 }
 
@@ -253,9 +255,23 @@ function render(){
 
 function onInput(i){
   const [s,e]=ranges[i];
+  const oldText = text.slice(s,e);
+  const oldSizes = sizeMap.slice(s,e);
   const parsed = readPageSizes(tas[i], size);
-  const pageText = parsed.text;
-  const pageSizes = parsed.sizes;
+  let pageText = parsed.text;
+  let pageSizes = parsed.sizes;
+
+  let prefix = 0;
+  while(prefix < oldText.length && prefix < pageText.length && oldText[prefix] === pageText[prefix]) prefix++;
+
+  let suffix = 0;
+  while(suffix < oldText.length - prefix && suffix < pageText.length - prefix &&
+        oldText[oldText.length - 1 - suffix] === pageText[pageText.length - 1 - suffix]) suffix++;
+
+  for(let j=0; j<prefix; j++) pageSizes[j] = oldSizes[j] ?? size;
+  for(let j=0; j<suffix; j++) pageSizes[pageText.length - 1 - j] = oldSizes[oldText.length - 1 - j] ?? size;
+  for(let j=prefix; j<pageText.length - suffix; j++) pageSizes[j] = size;
+
   text = text.slice(0,s) + pageText + text.slice(e);
   const before = sizeMap.slice(0,s);
   const after = sizeMap.slice(e);
