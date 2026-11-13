@@ -39,25 +39,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: Generate Tauri Icons Automatically
+      - name: Generate Custom Tauri Icons
         shell: bash
         run: |
           mkdir -p src-tauri/icons
-          node -e '
-            const https = require("https");
-            const fs = require("fs");
-            const file = fs.createWriteStream("app-icon.png");
-            https.get("https://dummyimage.com/512x512/2563eb/ffffff.png&text=App", (response) => {
-              response.pipe(file);
-              file.on("finish", () => {
-                file.close();
-                console.log("Base icon downloaded successfully.");
-              });
-            });
-          '
-          # Give it a second to finish writing, then use Tauri CLI to generate all icons (.ico, .png, etc.)
-          sleep 2
-          npx --yes @tauri-apps/cli icon app-icon.png
+          # Runs Tauri's tool using your custom logo file from the root directory
+          npx --yes @tauri-apps/cli icon logo.png
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0.5.2
