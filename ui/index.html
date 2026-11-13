@@ -19,8 +19,8 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
 #app{min-height:100vh; display:flex; flex-direction:column;}
 .top{position:sticky; top:env(safe-area-inset-top,0px); z-index:20; background:var(--bar); border-bottom:1px solid var(--bd);}
 .bar{display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 12px;}
-.bar select,.bar input[type=number],.bar input[type=text],.bar button{background:var(--ctl); color:var(--fg); border:1px solid var(--bd); border-radius:6px; padding:5px 10px; font:inherit;}
-.bar input[type=color]{width:42px; min-width:42px; height:32px; padding:2px; background:var(--ctl); border:1px solid var(--bd); border-radius:6px;}
+.bar select,.bar input[type=number],.bar input[type=text],.bar input[type=color],.bar button{background:var(--ctl); color:var(--fg); border:1px solid var(--bd); border-radius:6px; padding:5px 10px; font:inherit;}
+.bar input[type=color]{width:42px; min-width:42px; height:30px; padding:2px;}
 .bar button{cursor:pointer;}
 .bar button:hover{border-color:var(--mut);}
 .bar input[type=number]{width:60px;}
@@ -87,6 +87,7 @@ const FONTS = [
   ["IBM Plex Sans", "'IBM Plex Sans','Segoe UI',Arial,sans-serif", "IBM Plex Sans"],
   ["IBM Plex Mono", "'IBM Plex Mono','Consolas',monospace", "IBM Plex Mono"]
 ];
+
 const SIZES = { A4:[794,1123], Letter:[816,1056] };
 const TWIPS = { A4:[11906,16838], Letter:[12240,15840] };
 const M = 48, GAP = 24;
@@ -95,7 +96,7 @@ const DEFAULT_COLOR = "#111111";
 let text = "", pageKey = "A4", fontIdx = 0, size = 14;
 let currentColor = DEFAULT_COLOR;
 let ranges = [[0,0]], pending = null, curPage = 0, curScale = 1;
-let tas = [], sheets = [], sizeMap = [], colorMap = [];
+let tas = [], sheets = [], sizeMap = [], colorMap = [], lineHeightMap = [];
 let modified = false, message = "";
 let savedCaret = null;
 
@@ -117,8 +118,18 @@ $("colorSel").value = currentColor;
 
 function dims(){
   const [pw,ph]=SIZES[pageKey];
-  return {pw, ph, cw:pw-2*M, ch:ph-2*M, lh:Math.round(size*1.35)};
+  const maxTextSize = sizeMap.length
+    ? sizeMap.reduce((largest, v) => Math.max(largest, Number(v) || size), size)
+    : size;
+  return {
+    pw,
+    ph,
+    cw:pw-2*M,
+    ch:ph-2*M,
+    lh:Math.ceil(maxTextSize * 1.35)
+  };
 }
+
 function applyMeas(){
   const d=dims();
   meas.style.width=d.cw+"px";
@@ -143,7 +154,6 @@ function rowStart(str, off){
   }
   return lo;
 }
-
 function fitCount(str, maxH){
   let lo=0, hi=str.length;
   while(lo<hi){
@@ -192,6 +202,28 @@ function ensureColorMapLength(){
   while(colorMap.length<text.length) colorMap.push(currentColor);
   if(colorMap.length>text.length) colorMap.length=text.length;
 }
+function rebuildLineHeightMap(){
+  lineHeightMap = Array(text.length);
+  let lineStart = 0;
+
+  for(let i = 0; i <= text.length; i++){
+    if(i === text.length || text[i] === "\n"){
+      let largestSize = size;
+
+      for(let j = lineStart; j < i; j++){
+        largestSize = Math.max(largestSize, Number(sizeMap[j]) || size);
+      }
+
+      const lineHeight = Math.ceil(largestSize * 1.35);
+      for(let j = lineStart; j < i; j++){
+        lineHeightMap[j] = lineHeight;
+      }
+      if(i < text.length) lineHeightMap[i] = lineHeight;
+
+      lineStart = i + 1;
+    }
+  }
+}
 
 function readPageStyles(el, defaultSize=size, defaultColor=currentColor){
   let out="";
@@ -228,7 +260,7 @@ function readPageStyles(el, defaultSize=size, defaultColor=currentColor){
   return {text:out,sizes,colors};
 }
 
-function buildPageHtml(part, partSizes, partColors){
+function buildPageHtml(part, partSizes, partColors, partLineHeights){
   if(!part) return "";
   let html="";
   for(let i=0;i<part.length;i++){
@@ -236,14 +268,24 @@ function buildPageHtml(part, partSizes, partColors){
       html+="<br>";
       continue;
     }
+
     const runSize=partSizes[i] ?? size;
     const runColor=partColors[i] ?? DEFAULT_COLOR;
+    const runLineHeight=partLineHeights[i] ?? Math.ceil(runSize * 1.35);
+
     let j=i+1;
-    while(j<part.length && part[j]!=="\n" &&
-          (partSizes[j] ?? size)===runSize &&
-          (partColors[j] ?? DEFAULT_COLOR)===runColor) j++;
-    html+='<span style="font-size:'+runSize+'px;color:'+escapeHtml(runColor)+';">'+escapeHtml(part.slice(i,j))+'</span>';
-    i=j-1;
+    while(
+      j<part.length &&
+      part[j] !== "\n" &&
+      (partSizes[j] ?? size) === runSize &&
+      (partColors[j] ?? DEFAULT_COLOR) === runColor &&
+      (partLineHeights[j] ?? Math.ceil((partSizes[j] ?? size) * 1.35)) === runLineHeight
+    ){
+      j++;
+    }
+
+    html += '<span style="font-size:' + runSize + 'px; line-height:' + runLineHeight + 'px; color:' + escapeHtml(runColor) + ';">' + escapeHtml(part.slice(i,j)) + '</span>';
+    i = j - 1;
   }
   return html;
 }
@@ -394,6 +436,7 @@ function setCaretWithin(root,wantedOffset){
     range.selectNodeContents(root);
     range.collapse(false);
   }else range.collapse(true);
+
   const sel=window.getSelection();
   sel.removeAllRanges();
   sel.addRange(range);
@@ -402,12 +445,20 @@ function setCaretWithin(root,wantedOffset){
 function render(){
   ensureSizeMapLength();
   ensureColorMapLength();
+  rebuildLineHeightMap();
   paginate();
   ensureSheets(ranges.length);
+
   ranges.forEach(([s,e],i)=>{
-    const html=buildPageHtml(text.slice(s,e),sizeMap.slice(s,e),colorMap.slice(s,e));
-    if(tas[i].innerHTML!==html) tas[i].innerHTML=html;
+    const html = buildPageHtml(
+      text.slice(s,e),
+      sizeMap.slice(s,e),
+      colorMap.slice(s,e),
+      lineHeightMap.slice(s,e)
+    );
+    if(tas[i].innerHTML !== html) tas[i].innerHTML = html;
   });
+
   layoutScale();
 
   if(pending){
@@ -424,17 +475,18 @@ function render(){
     curPage=p;
     const d=dims();
     const lhs=d.lh*curScale;
-    const content=ta.innerText||ta.textContent;
-    const y=ta.getBoundingClientRect().top+(rowOf(content,Math.min(local,content.length))+1)*lhs;
+    const content=ta.innerText || ta.textContent;
+    const y=ta.getBoundingClientRect().top + (rowOf(content, Math.min(local, content.length)) + 1) * lhs;
     const barH=document.querySelector(".top").offsetHeight;
     const stH=$("status").offsetHeight;
 
-    setCaretWithin(ta,Math.max(0,Math.min(local,ta.textContent.length)));
+    setCaretWithin(ta, Math.max(0, Math.min(local, ta.textContent.length)));
     savedCaret=g;
 
     if(y-lhs<barH+8) window.scrollBy(0,y-lhs-barH-40);
     else if(y>innerHeight-stH-8) window.scrollBy(0,y-innerHeight+stH+40);
   }
+
   updateStatus();
 }
 
@@ -444,7 +496,7 @@ function onInput(i){
   const oldText=text.slice(s,e);
   const oldSizes=sizeMap.slice(s,e);
   const oldColors=colorMap.slice(s,e);
-  const parsed=readPageStyles(tas[i],size,currentColor);
+  const parsed=readPageStyles(tas[i], size, currentColor);
   const pageText=parsed.text;
   const pageSizes=parsed.sizes;
   const pageColors=parsed.colors;
@@ -464,7 +516,6 @@ function onInput(i){
     pageSizes[pageText.length-1-j]=oldSizes[oldText.length-1-j] ?? size;
     pageColors[pageText.length-1-j]=oldColors[oldText.length-1-j] ?? DEFAULT_COLOR;
   }
-  // Newly typed/replaced characters use the currently selected color.
   for(let j=prefix;j<pageText.length-suffix;j++){
     pageSizes[j]=size;
     pageColors[j]=currentColor;
@@ -475,10 +526,11 @@ function onInput(i){
   colorMap=colorMap.slice(0,s).concat(pageColors,colorMap.slice(e));
   ensureSizeMapLength();
   ensureColorMapLength();
+
   modified=true;
 
-  const targetCaret=caretBefore!=null ? caretBefore : s+pageText.length;
-  pending={g:targetCaret,prefer:i};
+  const targetCaret = caretBefore != null ? caretBefore : s + pageText.length;
+  pending={g:targetCaret, prefer:i};
   render();
 }
 
@@ -491,6 +543,7 @@ function onKey(ev,i){
     const v=ta.value;
     const n=ranges.length;
     const go=g=>{ ev.preventDefault(); pending={g}; render(); };
+
     switch(ev.key){
       case "Backspace":
         if(local===0 && i>0){
@@ -537,7 +590,7 @@ function onKey(ev,i){
           const [ns,ne]=ranges[i+1];
           const nv=text.slice(ns,ne);
           let k=0;
-          while(k<nv.length && rowOf(nv,k+1)<1 && nv[k]!=="\n") k++;
+          while(k<nv.length && rowOf(nv,k+1)<1 && nv[k]!="\n") k++;
           go(ns+Math.min(col,k));
         }
         break;
@@ -629,11 +682,11 @@ async function buildDocx(){
             (sizeMap[pos+(j-i)] ?? size)===runSize) j++;
       const half=Math.round(runSize*0.75*2);
       body+='<w:r><w:rPr><w:rFonts w:ascii="'+font+'" w:hAnsi="'+font+'"/><w:sz w:val="'+half+'"/><w:color w:val="'+colorToHex(runColor)+'"/></w:rPr><w:t xml:space="preserve">'+esc(line.slice(i,j))+'</w:t></w:r>';
-      pos+=j-i;
+      pos += j-i;
       i=j;
     }
-    body+="</w:p>";
-    pos++; // newline between paragraphs, if present
+    body += "</w:p>";
+    pos++;
   }
 
   const zip=new JSZip();
@@ -688,12 +741,13 @@ $("askNo").onclick=()=>{
   $("ask").style.display="none";
   afterAsk=null;
 };
+
 function openDlg(){
   $("fileIn").value="";
   $("fileIn").click();
 }
 
-$("fileIn").addEventListener("change",async e=>{
+$("fileIn").addEventListener("change", async e=>{
   const f=e.target.files[0];
   if(!f) return;
   try{
