@@ -14,10 +14,13 @@ jobs:
         include:
           - os: ubuntu-22.04
             target: deb
+            artifact_path: src-tauri/target/release/bundle/deb/*.deb
           - os: windows-latest
             target: msi
+            artifact_path: src-tauri/target/release/bundle/msi/*.msi
           - os: macos-latest
             target: dmg
+            artifact_path: src-tauri/target/release/bundle/dmg/*.dmg
 
     runs-on: ${{ matrix.os }}
 
@@ -39,16 +42,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: Generate Custom Tauri Icons
+      - name: Generate and Verify Tauri Icons
         shell: bash
         run: |
           mkdir -p src-tauri/icons
-          # Generate icons from your custom logo.png
-          npx --yes @tauri-apps/cli icon logo.png
-          
-          # Fallback safeguard: if tauri icon didn't name it icon.ico directly, ensure it exists
-          if [ ! -f src-tauri/icons/icon.ico ] && [ -f src-tauri/icons/32x32.png ]; then
-            cp src-tauri/icons/32x32.png src-tauri/icons/icon.ico
+          if [ -f logo.png ]; then
+            npx --yes @tauri-apps/cli icon logo.png
+          fi
+          if [ ! -f src-tauri/icons/icon.ico ]; then
+            node -e '
+              const https = require("https");
+              const fs = require("fs");
+              const file = fs.createWriteStream("src-tauri/icons/icon.ico");
+              https.get("https://raw.githubusercontent.com/tauri-apps/tauri/refs/heads/dev/examples/default/src-tauri/icons/icon.ico", (res) => {
+                res.pipe(file);
+              });
+            '
+            sleep 2
           fi
 
       - name: Build Tauri App
@@ -57,3 +67,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: --bundles ${{ matrix.target }}
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: r-writer-${{ matrix.target }}
+          path: ${{ matrix.artifact_path }}
