@@ -547,10 +547,9 @@ function onInput(i){
     pageColors[pageText.length-1-j]=oldColors[oldText.length-1-j] ?? currentColor;
   }
 
-  const inheritColor = (prefix > 0) ? (oldColors[prefix - 1] ?? currentColor) : currentColor;
   for(let j=prefix;j<pageText.length-suffix;j++){
     pageSizes[j]=size;
-    pageColors[j]=inheritColor;
+    pageColors[j]=currentColor;
   }
 
   text=text.slice(0,s)+pageText+text.slice(e);
