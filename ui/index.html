@@ -19,8 +19,7 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
 #app{min-height:100vh; display:flex; flex-direction:column;}
 .top{position:sticky; top:env(safe-area-inset-top,0px); z-index:20; background:var(--bar); border-bottom:1px solid var(--bd);}
 .bar{display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 12px;}
-.bar select,.bar input[type=number],.bar input[type=text],.bar input[type=color],.bar button{background:var(--ctl); color:var(--fg); border:1px solid var(--bd); border-radius:6px; padding:5px 10px; font:inherit;}
-.bar input[type=color]{width:42px; min-width:42px; height:30px; padding:2px;}
+.bar select,.bar input[type=number],.bar input[type=text],.bar button{background:var(--ctl); color:var(--fg); border:1px solid var(--bd); border-radius:6px; padding:5px 10px; font:inherit;}
 .bar button{cursor:pointer;}
 .bar button:hover{border-color:var(--mut);}
 .bar input[type=number]{width:60px;}
@@ -38,7 +37,7 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
 #canvas{flex:1; background:var(--canvas); padding:20px 0 40px;}
 #scaler{margin:0 auto; transform-origin:top center;}
 .sheet{position:relative; background:#fff; border-radius:2px; box-shadow:0 1px 3px rgba(0,0,0,.35);}
-.sheet .page-edit{position:absolute; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:inherit; padding:0; margin:0; white-space:pre-wrap; word-wrap:break-word; tab-size:4;}
+.sheet .page-edit{position:absolute; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:#111; padding:0; margin:0; white-space:pre-wrap; word-wrap:break-word; tab-size:4;}
 .status{position:sticky; bottom:env(safe-area-inset-bottom,0px); z-index:20; padding:6px 12px; border-top:1px solid var(--bd); color:var(--mut); font-size:13px; background:var(--bar);}
 </style>
 </head>
@@ -52,7 +51,6 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
       <span class="sep"></span>
       <select id="pageSel" aria-label="Page size"><option value="A4">A4</option><option value="A5">A5</option></select>
       <select id="fontSel" aria-label="Font"></select>
-      <label>Color <input id="colorSel" type="color" value="#111111" aria-label="Text color"></label>
       <label>Size <input id="sizeIn" type="number" min="8" max="48" value="14"> px</label>
     </div>
     <div id="ask"><span>Discard your unsaved changes?</span><button id="askYes">Discard</button><button id="askNo">Cancel</button></div>
@@ -91,12 +89,10 @@ const FONTS = [
 const SIZES = { A4:[794,1123], A5:[560,794] };
 const TWIPS = { A4:[11906,16838], A5:[8395,11908] };
 const M = 48, GAP = 24;
-const DEFAULT_COLOR = "#111111";
 
 let text = "", pageKey = "A4", fontIdx = 0, size = 14;
-let currentColor = DEFAULT_COLOR;
 let ranges = [[0,0]], pending = null, curPage = 0, curScale = 1;
-let tas = [], sheets = [], sizeMap = [], colorMap = [], lineHeightMap = [];
+let tas = [], sheets = [], sizeMap = [], lineHeightMap = [];
 let modified = false, message = "";
 let savedCaret = null;
 
@@ -114,7 +110,6 @@ FONTS.forEach((f,i)=>{
   $("fontSel").appendChild(o);
 });
 $("fontSel").value = fontIdx;
-$("colorSel").value = currentColor;
 
 function dims(){
   const [pw,ph]=SIZES[pageKey];
@@ -140,7 +135,6 @@ function heightRange(start, end){
   meas.innerHTML = buildPageHtml(
     text.slice(start, end),
     sizeMap.slice(start, end),
-    colorMap.slice(start, end),
     lineHeightMap.slice(start, end)
   ) + '<span style="font-size:' + size + 'px;line-height:' + dims().lh + 'px;">\u200b</span>';
   return meas.offsetHeight;
@@ -209,11 +203,6 @@ function ensureSizeMapLength(){
   if(sizeMap.length > text.length) sizeMap.length = text.length;
 }
 
-function ensureColorMapLength(){
-  while(colorMap.length < text.length) colorMap.push(currentColor);
-  if(colorMap.length > text.length) colorMap.length = text.length;
-}
-
 function rebuildLineHeightMap(){
   lineHeightMap = Array(text.length);
   let lineStart = 0;
@@ -237,18 +226,16 @@ function rebuildLineHeightMap(){
   }
 }
 
-function readPageStyles(el, defaultSize=size, defaultColor=currentColor){
+function readPageStyles(el, defaultSize=size){
   let out="";
   const sizes=[];
-  const colors=[];
-  function walk(node, inheritedSize, inheritedColor){
+  function walk(node, inheritedSize){
     if(!node) return;
     if(node.nodeType===3){
       const s=node.textContent||"";
       for(const ch of s){
         out+=ch;
         sizes.push(inheritedSize);
-        colors.push(inheritedColor);
       }
       return;
     }
@@ -256,29 +243,25 @@ function readPageStyles(el, defaultSize=size, defaultColor=currentColor){
     if(node.tagName==="BR"){
       out+="\n";
       sizes.push(inheritedSize);
-      colors.push(inheritedColor);
       return;
     }
     const isBlock = (node !== el && (node.tagName === "DIV" || node.tagName === "P"));
     if(isBlock && out.length > 0 && out[out.length - 1] !== "\n"){
       out+="\n";
       sizes.push(inheritedSize);
-      colors.push(inheritedColor);
     }
     let nextSize=inheritedSize;
-    let nextColor=inheritedColor;
     if(node.style && node.style.fontSize){
       const v=parseFloat(node.style.fontSize);
       if(!Number.isNaN(v)) nextSize=v;
     }
-    if(node.style && node.style.color) nextColor=node.style.color;
-    for(const child of node.childNodes) walk(child,nextSize,nextColor);
+    for(const child of node.childNodes) walk(child,nextSize);
   }
-  walk(el,defaultSize,defaultColor);
-  return {text:out,sizes,colors};
+  walk(el,defaultSize);
+  return {text:out,sizes};
 }
 
-function buildPageHtml(part, partSizes, partColors, partLineHeights){
+function buildPageHtml(part, partSizes, partLineHeights){
   if(!part) return "";
   let html="";
   for(let i=0;i<part.length;i++){
@@ -288,7 +271,6 @@ function buildPageHtml(part, partSizes, partColors, partLineHeights){
     }
 
     const runSize=partSizes[i] ?? size;
-    const runColor=partColors[i] ?? currentColor;
     const runLineHeight=partLineHeights[i] ?? Math.ceil(runSize * 1.35);
 
     let j=i+1;
@@ -296,13 +278,12 @@ function buildPageHtml(part, partSizes, partColors, partLineHeights){
       j<part.length &&
       part[j] !== "\n" &&
       (partSizes[j] ?? size) === runSize &&
-      (partColors[j] ?? currentColor) === runColor &&
       (partLineHeights[j] ?? Math.ceil((partSizes[j] ?? size) * 1.35)) === runLineHeight
     ){
       j++;
     }
 
-    html += '<span style="font-size:' + runSize + 'px; line-height:' + runLineHeight + 'px; color:' + escapeHtml(runColor) + ';">' + escapeHtml(part.slice(i,j)) + '</span>';
+    html += '<span style="font-size:' + runSize + 'px; line-height:' + runLineHeight + 'px;">' + escapeHtml(part.slice(i,j)) + '</span>';
     i = j - 1;
   }
   return html;
@@ -477,7 +458,6 @@ function setCaretWithin(root,wantedOffset){
 
 function render(){
   ensureSizeMapLength();
-  ensureColorMapLength();
   rebuildLineHeightMap();
   paginate();
   ensureSheets(ranges.length);
@@ -486,7 +466,6 @@ function render(){
     const html = buildPageHtml(
       text.slice(s,e),
       sizeMap.slice(s,e),
-      colorMap.slice(s,e),
       lineHeightMap.slice(s,e)
     );
     if(tas[i].innerHTML !== html) tas[i].innerHTML = html;
@@ -528,11 +507,9 @@ function onInput(i){
   const caretBefore=currentCaretPosition();
   const oldText=text.slice(s,e);
   const oldSizes=sizeMap.slice(s,e);
-  const oldColors=colorMap.slice(s,e);
-  const parsed=readPageStyles(tas[i], size, currentColor);
+  const parsed=readPageStyles(tas[i], size);
   const pageText=parsed.text;
   const pageSizes=parsed.sizes;
-  const pageColors=parsed.colors;
 
   let prefix=0;
   while(prefix<oldText.length && prefix<pageText.length && oldText[prefix]===pageText[prefix]) prefix++;
@@ -543,23 +520,18 @@ function onInput(i){
 
   for(let j=0;j<prefix;j++){
     pageSizes[j]=oldSizes[j] ?? size;
-    pageColors[j]=oldColors[j] ?? currentColor;
   }
   for(let j=0;j<suffix;j++){
     pageSizes[pageText.length-1-j]=oldSizes[oldText.length-1-j] ?? size;
-    pageColors[pageText.length-1-j]=oldColors[oldText.length-1-j] ?? currentColor;
   }
 
   for(let j=prefix;j<pageText.length-suffix;j++){
     pageSizes[j]=size;
-    pageColors[j]=currentColor;
   }
 
   text=text.slice(0,s)+pageText+text.slice(e);
   sizeMap=sizeMap.slice(0,s).concat(pageSizes,sizeMap.slice(e));
-  colorMap=colorMap.slice(0,s).concat(pageColors,colorMap.slice(e));
   ensureSizeMapLength();
-  ensureColorMapLength();
 
   modified=true;
 
@@ -588,7 +560,6 @@ function onKey(ev,i){
       const gEnd = s + sel.end;
       text = text.slice(0, gStart) + "\n" + text.slice(gEnd);
       sizeMap.splice(gStart, gEnd - gStart, size);
-      colorMap.splice(gStart, gEnd - gStart, currentColor);
       modified = true;
       pending = { g: gStart + 1, prefer: i };
       render();
@@ -599,7 +570,6 @@ function onKey(ev,i){
         ev.preventDefault();
         text=text.slice(0,s-1)+text.slice(s);
         sizeMap.splice(s-1,1);
-        colorMap.splice(s-1,1);
         modified=true;
         pending={g:s-1};
         render();
@@ -610,7 +580,6 @@ function onKey(ev,i){
         ev.preventDefault();
         text=text.slice(0,e)+text.slice(e+1);
         sizeMap.splice(e,1);
-        colorMap.splice(e,1);
         modified=true;
         pending={g:e};
         render();
@@ -649,12 +618,6 @@ function onKey(ev,i){
 /* ---------- file formats ---------- */
 function esc(s){
   return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
-function colorToHex(color){
-  if(/^#[0-9a-f]{6}$/i.test(color)) return color.slice(1).toUpperCase();
-  const match=color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
-  if(match) return match.slice(1,4).map(n=>Number(n).toString(16).padStart(2,"0")).join("").toUpperCase();
-  return "111111";
 }
 
 function docxText(xml){
@@ -708,7 +671,6 @@ function odtText(xml){
 
 async function buildDocx(){
   ensureSizeMapLength();
-  ensureColorMapLength();
   const [w,h]=TWIPS[pageKey];
   const font=esc(FONTS[fontIdx][2]);
   let body="";
@@ -724,14 +686,12 @@ async function buildDocx(){
         pos++;
         continue;
       }
-      const runColor=colorMap[pos] ?? currentColor;
       const runSize=sizeMap[pos] ?? size;
       let j=i+1;
       while(j<line.length && line[j]!=="\t" &&
-            (colorMap[pos+(j-i)] ?? currentColor)===runColor &&
             (sizeMap[pos+(j-i)] ?? size)===runSize) j++;
       const half=Math.round(runSize*0.75*2);
-      body+='<w:r><w:rPr><w:rFonts w:ascii="'+font+'" w:hAnsi="'+font+'"/><w:sz w:val="'+half+'"/><w:color w:val="'+colorToHex(runColor)+'"/></w:rPr><w:t xml:space="preserve">'+esc(line.slice(i,j))+'</w:t></w:r>';
+      body+='<w:r><w:rPr><w:rFonts w:ascii="'+font+'" w:hAnsi="'+font+'"/><w:sz w:val="'+half+'"/></w:rPr><w:t xml:space="preserve">'+esc(line.slice(i,j))+'</w:t></w:r>';
       pos += j-i;
       i=j;
     }
@@ -812,7 +772,6 @@ $("fileIn").addEventListener("change", async e=>{
     }
     text=t;
     sizeMap=Array(text.length).fill(size);
-    colorMap=Array(text.length).fill(currentColor);
     modified=false;
     message="Opened "+f.name;
     $("nameIn").value=f.name.replace(/\.[^.]+$/,"");
@@ -878,34 +837,6 @@ document.addEventListener("keydown",e=>{
 $("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
 $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
 
-$("colorSel").addEventListener("input",e=>{
-  currentColor=e.target.value;
-  const sel=window.getSelection();
-  if(sel && sel.rangeCount>0 && !sel.isCollapsed){
-    for(let i=0; i<tas.length; i++){
-      const ta=tas[i];
-      const localSel=getLocalSelection(ta);
-      if(localSel){
-        const [s,e]=ranges[i];
-        const startG=s+localSel.start;
-        const endG=s+localSel.end;
-        for(let idx=startG; idx<endG; idx++){
-          colorMap[idx]=currentColor;
-        }
-        modified=true;
-        render();
-        return;
-      }
-    }
-  }
-  const caret = currentCaretPosition();
-  ensureColorMapLength();
-  if(caret != null && caret > 0 && caret - 1 < colorMap.length){
-    colorMap[caret - 1] = currentColor;
-  }
-  modified = true;
-});
-
 $("sizeIn").addEventListener("input",e=>{
   const v=Math.max(8,Math.min(48,+e.target.value||14));
   size=v;
@@ -929,7 +860,6 @@ window.addEventListener("beforeunload",e=>{
 });
 
 sizeMap=Array(text.length).fill(size);
-colorMap=Array(text.length).fill(currentColor);
 render();
 tas[0].focus();
 </script>
