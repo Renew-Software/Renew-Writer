@@ -44,7 +44,7 @@ jobs:
         run: |
           mkdir -p src-tauri/icons
           curl -sL https://raw.githubusercontent.com/tauri-apps/tauri/dev/examples/default/src-tauri/icons/icon.png -o app-icon.png
-          npx tauri icon app-icon.png
+          npx --yes @tauri-apps/cli icon app-icon.png
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0.5.2
