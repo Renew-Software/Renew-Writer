@@ -64,7 +64,7 @@ jobs:
           fi
 
       - name: Build Tauri App (Native CLI)
-        run: npx tauri build --bundles ${{ matrix.target }}
+        run: npx --yes @tauri-apps/cli build --bundles ${{ matrix.target }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
