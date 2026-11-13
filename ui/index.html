@@ -617,7 +617,7 @@ function onKey(ev,i){
 
 /* ---------- file formats ---------- */
 function esc(s){
-  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;");
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
 function docxText(xml){
@@ -793,15 +793,22 @@ $("fileIn").addEventListener("change", async e=>{
 });
 
 function triggerDownload(blob,filename){
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  a.href=url;
-  a.download=filename;
-  a.style.display="none";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const reader = new FileReader();
+  reader.onload = function() {
+    const a = document.createElement("a");
+    a.href = reader.result;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+  reader.onerror = function(err) {
+    console.error("FileReader error:", err);
+    message = "Save failed: Could not encode file.";
+    updateStatus();
+  };
+  reader.readAsDataURL(blob);
 }
 
 async function save(fmt){
