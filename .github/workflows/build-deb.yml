@@ -10,6 +10,8 @@ on:
 jobs:
   build-deb:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write   # <-- Required for softprops/action-gh-release to upload files
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
