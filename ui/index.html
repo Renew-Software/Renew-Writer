@@ -38,7 +38,7 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
 #canvas{flex:1; background:var(--canvas); padding:20px 0 40px;}
 #scaler{margin:0 auto; transform-origin:top center;}
 .sheet{position:relative; background:#fff; border-radius:2px; box-shadow:0 1px 3px rgba(0,0,0,.35);}
-.sheet .page-edit{scroll-margin:90px 0 50px; position:absolute; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:#111; padding:0; margin:0; white-space:pre-wrap; word-wrap:break-word; tab-size:4;}
+.sheet .page-edit{position:absolute; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:inherit; padding:0; margin:0; white-space:pre-wrap; word-wrap:break-word; tab-size:4;}
 .status{position:sticky; bottom:env(safe-area-inset-bottom,0px); z-index:20; padding:6px 12px; border-top:1px solid var(--bd); color:var(--mut); font-size:13px; background:var(--bar);}
 </style>
 </head>
@@ -285,7 +285,7 @@ function buildPageHtml(part, partSizes, partColors, partLineHeights){
     }
 
     const runSize=partSizes[i] ?? size;
-    const runColor=partColors[i] ?? DEFAULT_COLOR;
+    const runColor=partColors[i] ?? currentColor;
     const runLineHeight=partLineHeights[i] ?? Math.ceil(runSize * 1.35);
 
     let j=i+1;
@@ -293,7 +293,7 @@ function buildPageHtml(part, partSizes, partColors, partLineHeights){
       j<part.length &&
       part[j] !== "\n" &&
       (partSizes[j] ?? size) === runSize &&
-      (partColors[j] ?? DEFAULT_COLOR) === runColor &&
+      (partColors[j] ?? currentColor) === runColor &&
       (partLineHeights[j] ?? Math.ceil((partSizes[j] ?? size) * 1.35)) === runLineHeight
     ){
       j++;
@@ -349,7 +349,6 @@ function ensureSheets(n){
     ta.style.fontFamily=FONTS[fontIdx][1];
     ta.style.fontSize=size+"px";
     ta.style.lineHeight=d.lh+"px";
-    ta.style.color=currentColor;
   });
 }
 
@@ -541,11 +540,11 @@ function onInput(i){
 
   for(let j=0;j<prefix;j++){
     pageSizes[j]=oldSizes[j] ?? size;
-    pageColors[j]=oldColors[j] ?? DEFAULT_COLOR;
+    pageColors[j]=oldColors[j] ?? currentColor;
   }
   for(let j=0;j<suffix;j++){
     pageSizes[pageText.length-1-j]=oldSizes[oldText.length-1-j] ?? size;
-    pageColors[pageText.length-1-j]=oldColors[oldText.length-1-j] ?? DEFAULT_COLOR;
+    pageColors[pageText.length-1-j]=oldColors[oldText.length-1-j] ?? currentColor;
   }
 
   const inheritColor = (prefix > 0) ? (oldColors[prefix - 1] ?? currentColor) : currentColor;
@@ -721,11 +720,11 @@ async function buildDocx(){
         pos++;
         continue;
       }
-      const runColor=colorMap[pos] ?? DEFAULT_COLOR;
+      const runColor=colorMap[pos] ?? currentColor;
       const runSize=sizeMap[pos] ?? size;
       let j=i+1;
       while(j<line.length && line[j]!=="\t" &&
-            (colorMap[pos+(j-i)] ?? DEFAULT_COLOR)===runColor &&
+            (colorMap[pos+(j-i)] ?? currentColor)===runColor &&
             (sizeMap[pos+(j-i)] ?? size)===runSize) j++;
       const half=Math.round(runSize*0.75*2);
       body+='<w:r><w:rPr><w:rFonts w:ascii="'+font+'" w:hAnsi="'+font+'"/><w:sz w:val="'+half+'"/><w:color w:val="'+colorToHex(runColor)+'"/></w:rPr><w:t xml:space="preserve">'+esc(line.slice(i,j))+'</w:t></w:r>';
@@ -895,6 +894,11 @@ $("colorSel").addEventListener("input",e=>{
       }
     }
   }
+  const caret = currentCaretPosition();
+  if(caret != null && caret < colorMap.length){
+    colorMap[caret] = currentColor;
+  }
+  modified = true;
 });
 
 $("sizeIn").addEventListener("input",e=>{
