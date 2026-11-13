@@ -1,26 +1,22 @@
-name: Build All
+name: "Publish Release"
 
 on:
   push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
+    tags:
+      - 'v*' # Trigger whenever a tag like v1.2.0 is pushed
 
 jobs:
-  build:
+  publish:
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-22.04
             target: deb
-            artifact_path: src-tauri/target/release/bundle/deb/*.deb
           - os: windows-latest
             target: msi
-            artifact_path: src-tauri/target/release/bundle/msi/*.msi
           - os: macos-latest
             target: dmg
-            artifact_path: src-tauri/target/release/bundle/dmg/*.dmg
 
     runs-on: ${{ matrix.os }}
 
@@ -28,7 +24,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js (For Build Scripts)
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
@@ -61,15 +57,14 @@ jobs:
             sleep 2
           fi
 
-      - name: Build Tauri App
+      - name: Run Tauri Action (Build & Release)
         uses: tauri-apps/tauri-action@v0.5.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "R-Writer ${{ github.ref_name }}"
+          body: "Automated release for R-Writer version ${{ github.ref_name }}"
+          draft: false
+          prerelease: false
           args: --bundles ${{ matrix.target }}
-
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: r-writer-${{ matrix.target }}
-          path: ${{ matrix.artifact_path }}
