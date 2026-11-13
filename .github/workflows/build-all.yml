@@ -37,18 +37,23 @@ jobs:
       - name: Download JSZip dependency
         run: curl -sL https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js -o ui/jszip.min.js
 
-      # 3. Install Rust dependencies (Linux system packages required for WebKitGTK / Tauri)
+      # 3. Generate all required Tauri icons and PNGs automatically from your source image
+      # (Make sure your source image in the root directory is named logo.png, or change the name below)
+      - name: Generate Tauri Icons
+        run: npx @tauri-apps/cli icon logo.png
+
+      # 4. Install Linux system packages (Ubuntu only)
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22_04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      # 4. Setup Rust toolchain
+      # 5. Setup Rust toolchain
       - name: Rust setup
         uses: dtolnay/rust-toolchain@stable
 
-      # 5. Build Tauri App
+      # 6. Build Tauri App
       - name: Tauri Build
         uses: tauri-apps/tauri-action@v0.5.2
         env:
