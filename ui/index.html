@@ -87,7 +87,7 @@ const M = 48, GAP = 24;
 
 let text = "", pageKey = "A4", fontIdx = 2, size = 14;
 let ranges = [[0,0]], pending = null, curPage = 0, curScale = 1;
-let tas = [], sheets = [], sizes = [];
+let tas = [], sheets = [], sizeMap = [];
 let modified = false, message = "";
 
 const $ = id => document.getElementById(id);
@@ -129,84 +129,59 @@ function paginate(){
   }
 }
 
-function escapeHtml(str){ return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;"); }
+function escapeHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;"); }
 
-function buildSizeMarkup(str, styleSizes){
-  if(!str){ return ""; }
-  let html="", run="", runSize = styleSizes[0] ?? size;
-  const flush = ()=>{ if(run){ html += '<span style="font-size:'+runSize+'px">'+escapeHtml(run)+"</span>"; run=""; } };
-  for(let i=0;i<str.length;i++){
-    const ch = str[i];
-    const nextSize = styleSizes[i] ?? size;
-    if(ch === "\n"){
-      flush();
-      html += "<br>";
-      runSize = nextSize;
-      continue;
-    }
-    if(run === "") runSize = nextSize;
-    if(nextSize !== runSize && run){
-      html += '<span style="font-size:'+runSize+'px">'+escapeHtml(run)+"</span>";
-      run = "";
-      runSize = nextSize;
-    }
-    run += ch;
-  }
-  flush();
-  return html;
+function ensureSizeMapLength(){
+  while(sizeMap.length < text.length) sizeMap.push(size);
+  if(sizeMap.length > text.length) sizeMap.length = text.length;
 }
 
-function readPageTextAndSizes(el){
-  const outText=[]; const outSizes=[];
+function readPageSizes(el, defaultSize = size){
+  let out = "";
+  let sizes = [];
   function walk(node, inheritedSize){
     if(!node) return;
     if(node.nodeType === 3){
-      for(const ch of node.textContent){ outText.push(ch); outSizes.push(inheritedSize); }
+      const s=node.textContent || "";
+      for(const ch of s){ out += ch; sizes.push(inheritedSize); }
       return;
     }
     if(node.nodeType !== 1) return;
     if(node.tagName === "BR"){
-      outText.push("\n"); outSizes.push(inheritedSize);
+      out += "\n"; sizes.push(inheritedSize);
       return;
     }
-    const nextSize = node.style && node.style.fontSize ? parseFloat(node.style.fontSize) || inheritedSize : inheritedSize;
+    let nextSize = inheritedSize;
+    if(node.style && node.style.fontSize){
+      const v=parseFloat(node.style.fontSize);
+      if(!Number.isNaN(v)) nextSize = v;
+    }
     for(const child of node.childNodes){ walk(child, nextSize); }
   }
-  walk(el, parseFloat(el.style.fontSize) || size);
-  return { text: outText.join(""), sizes: outSizes };
+  walk(el, defaultSize);
+  return {text:out, sizes};
 }
 
-function setCaretAt(el, offset){
-  if(!el || typeof offset !== "number") return;
-  const sel = window.getSelection();
-  if(!sel) return;
-  const range = document.createRange();
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  let current = 0;
-  let node = walker.nextNode();
-  while(node){
-    const len = node.textContent.length;
-    if(offset <= current + len){
-      range.setStart(node, Math.max(0, offset - current));
-      range.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(range);
-      return;
-    }
-    current += len;
-    node = walker.nextNode();
+function buildPageHtml(part, partSizes){
+  if(!part) return "";
+  let html = "";
+  for(let i=0;i<part.length;i++){
+    const ch = part[i];
+    if(ch === "\n") { html += "<br>"; continue; }
+    const current = partSizes[i] ?? size;
+    let j = i + 1;
+    while(j < part.length && part[j] !== "\n" && (partSizes[j] ?? size) === current){ j++; }
+    html += '<span style="font-size:' + current + 'px;">' + escapeHtml(part.slice(i, j)) + '</span>';
+    i = j - 1;
   }
-  range.setStart(el, el.childNodes.length);
-  range.collapse(true);
-  sel.removeAllRanges();
-  sel.addRange(range);
+  return html;
 }
 
 function ensureSheets(n){
   const d=dims();
   while(sheets.length<n){
     const sh=document.createElement("div"); sh.className="sheet";
-    const ta=document.createElement("div"); ta.className="page-edit"; ta.spellcheck=false; ta.setAttribute("contenteditable","true");
+    const ta=document.createElement("div"); ta.className="page-edit"; ta.contentEditable="true"; ta.spellcheck=false; ta.setAttribute("aria-label","Page text");
     const idx=sheets.length;
     ta.addEventListener("input",()=>onInput(idx));
     ta.addEventListener("keydown",e=>onKey(e,idx));
@@ -218,7 +193,7 @@ function ensureSheets(n){
     sh.style.width=d.pw+"px"; sh.style.height=d.ph+"px"; sh.style.marginBottom=GAP+"px";
     const ta=tas[i];
     ta.style.left=M+"px"; ta.style.top=M+"px"; ta.style.width=d.cw+"px"; ta.style.height=d.ch+"px";
-    ta.style.fontFamily=FONTS[fontIdx][1]; ta.style.fontSize=size+"px"; ta.style.lineHeight=d.lh+"px";
+    ta.style.fontFamily=FONTS[fontIdx][1]; ta.style.lineHeight=d.lh+"px";
   });
 }
 
@@ -236,27 +211,26 @@ function updateStatus(){
   document.title=(modified?"*":"")+fileName()+" - R-Writer";
 }
 
-function syncFromEditors(){
-  let nextText = ""; const nextSizes = [];
+function rebuildDocumentFromPages(){
+  let nextText = "";
+  let nextSizes = [];
   for(const ta of tas){
-    const page = readPageTextAndSizes(ta);
-    nextText += page.text;
-    nextSizes.push(...page.sizes);
+    const parsed = readPageSizes(ta, size);
+    nextText += parsed.text;
+    nextSizes.push(...parsed.sizes);
   }
   text = nextText;
-  sizes = nextSizes;
+  sizeMap = nextSizes;
+  ensureSizeMapLength();
 }
 
 function render(){
   paginate(); ensureSheets(ranges.length);
   ranges.forEach(([s,e],i)=>{
-    const chunk = text.slice(s,e);
-    const chunkSizes = sizes.slice(s,e);
-    const current = readPageTextAndSizes(tas[i]);
-    const content = buildSizeMarkup(chunk, chunkSizes);
-    if(current.text !== chunk || current.text.length !== chunk.length){
-      tas[i].innerHTML = content;
-    }
+    const part = text.slice(s,e);
+    const partSizes = sizeMap.slice(s,e);
+    const html = buildPageHtml(part, partSizes);
+    if(tas[i].innerHTML !== html) tas[i].innerHTML = html;
   });
   layoutScale();
   if(pending){
@@ -266,11 +240,10 @@ function render(){
     const local=g-ranges[p][0];
     pending=null;
     tas[p].focus();
-    if(typeof tas[p].setSelectionRange === "function") tas[p].setSelectionRange(local,local);
-    else setCaretAt(tas[p], local);
     curPage=p;
-    const ta=tas[p]; const d=dims(); const lhs=d.lh*curScale;
-    const y=ta.getBoundingClientRect().top+(rowOf(ta.textContent,local)+1)*lhs;
+    const ta=tas[p];
+    const d=dims(); const lhs=d.lh*curScale;
+    const y=ta.getBoundingClientRect().top+(rowOf(ta.innerText || ta.textContent, local)+1)*lhs;
     const barH=document.querySelector(".top").offsetHeight, stH=$("status").offsetHeight;
     if(y-lhs<barH+8) window.scrollBy(0,y-lhs-barH-40);
     else if(y>innerHeight-stH-8) window.scrollBy(0,y-innerHeight+stH+40);
@@ -279,15 +252,24 @@ function render(){
 }
 
 function onInput(i){
-  syncFromEditors();
-  modified=true;
-  pending={g:ranges[i][0], prefer:i};
+  const [s,e]=ranges[i];
+  const parsed = readPageSizes(tas[i], size);
+  const pageText = parsed.text;
+  const pageSizes = parsed.sizes;
+  text = text.slice(0,s) + pageText + text.slice(e);
+  const before = sizeMap.slice(0,s);
+  const after = sizeMap.slice(e);
+  sizeMap = before.concat(pageSizes, after);
+  ensureSizeMapLength();
+  modified = true;
+  pending={g:s+pageText.length, prefer:i};
   render();
 }
 
 function onKey(ev,i){
   if(ev.ctrlKey||ev.metaKey||ev.altKey||ev.shiftKey) return;
-  const ta=tas[i]; if(typeof ta.selectionStart !== "undefined"){
+  const ta=tas[i];
+  if(typeof ta.selectionStart === "number" && typeof ta.selectionEnd === "number"){
     const [s,e]=ranges[i]; const local=ta.selectionStart; const v=ta.value; const n=ranges.length;
     const go=g=>{ ev.preventDefault(); pending={g}; render(); };
     switch(ev.key){
@@ -388,7 +370,7 @@ function odtLine(line){
 }
 
 async function buildOdt(){
-  const cm={A4:["21.0cm","29.7cm"],Letter:["21.59cm","27.94cm"]}[pageKey]; const font=esc(FONTS[fontIdx][2]);
+  const font=esc(FONTS[fontIdx][2]);
   const body=text.split("\n").map(l=>'<text:p text:style-name="P1">'+odtLine(l)+'</text:p>').join("");
   const zip=new JSZip();
   zip.file("mimetype","application/vnd.oasis.opendocument.text",{compression:"STORE"});
@@ -418,7 +400,7 @@ $("fileIn").addEventListener("change", async e=>{
       else if(ext==="odt") t=odtText(await z.file("content.xml").async("string"));
       else throw new Error("use a .docx, .odt or .txt file");
     }
-    text=t; sizes=Array(text.length).fill(size); modified=false; message="Opened "+f.name;
+    text=t; sizeMap=Array(text.length).fill(size); modified=false; message="Opened "+f.name;
     $("nameIn").value=f.name.replace(/\.[^.]+$/,"" );
     pending={g:0}; render();
   }catch(err){ message="Open failed: "+(err&&err.message?err.message:err); updateStatus(); }
@@ -475,7 +457,7 @@ $("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
 $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
 $("sizeIn").addEventListener("input",e=>{ const v=Math.max(8,Math.min(48,+e.target.value||14)); size=v; keep(); });
 function keep(){
-  const g=tas[curPage]?ranges[curPage][0]+(tas[curPage].textContent||"").length:0;
+  const g=tas[curPage] ? ranges[curPage][0] + (tas[curPage].innerText || tas[curPage].textContent || "").length : 0;
   pending={g, prefer:curPage};
   render();
 }
@@ -485,6 +467,7 @@ window.addEventListener("beforeunload", e => {
   if (modified) { e.preventDefault(); e.returnValue = ""; }
 });
 
+sizeMap = Array(text.length).fill(size);
 render(); tas[0].focus();
 </script>
 </body>
