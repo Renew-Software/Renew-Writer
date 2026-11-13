@@ -37,7 +37,7 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
 #canvas{flex:1; background:var(--canvas); padding:20px 0 40px;}
 #scaler{margin:0 auto; transform-origin:top center;}
 .sheet{position:relative; background:#fff; border-radius:2px; box-shadow:0 1px 3px rgba(0,0,0,.35);}
-.sheet textarea{scroll-margin:90px 0 50px; position:absolute; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:#111; padding:0; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4;}
+.sheet .page-edit{scroll-margin:90px 0 50px; position:absolute; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:#111; padding:0; margin:0; white-space:pre-wrap; word-wrap:break-word; tab-size:4;}
 .status{position:sticky; bottom:env(safe-area-inset-bottom,0px); z-index:20; padding:6px 12px; border-top:1px solid var(--bd); color:var(--mut); font-size:13px; background:var(--bar);}
 </style>
 </head>
@@ -87,7 +87,7 @@ const M = 48, GAP = 24;
 
 let text = "", pageKey = "A4", fontIdx = 2, size = 14;
 let ranges = [[0,0]], pending = null, curPage = 0, curScale = 1;
-let tas = [], sheets = [];
+let tas = [], sheets = [], sizes = [];
 let modified = false, message = "";
 
 const $ = id => document.getElementById(id);
@@ -129,11 +129,84 @@ function paginate(){
   }
 }
 
+function escapeHtml(str){ return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;"); }
+
+function buildSizeMarkup(str, styleSizes){
+  if(!str){ return ""; }
+  let html="", run="", runSize = styleSizes[0] ?? size;
+  const flush = ()=>{ if(run){ html += '<span style="font-size:'+runSize+'px">'+escapeHtml(run)+"</span>"; run=""; } };
+  for(let i=0;i<str.length;i++){
+    const ch = str[i];
+    const nextSize = styleSizes[i] ?? size;
+    if(ch === "\n"){
+      flush();
+      html += "<br>";
+      runSize = nextSize;
+      continue;
+    }
+    if(run === "") runSize = nextSize;
+    if(nextSize !== runSize && run){
+      html += '<span style="font-size:'+runSize+'px">'+escapeHtml(run)+"</span>";
+      run = "";
+      runSize = nextSize;
+    }
+    run += ch;
+  }
+  flush();
+  return html;
+}
+
+function readPageTextAndSizes(el){
+  const outText=[]; const outSizes=[];
+  function walk(node, inheritedSize){
+    if(!node) return;
+    if(node.nodeType === 3){
+      for(const ch of node.textContent){ outText.push(ch); outSizes.push(inheritedSize); }
+      return;
+    }
+    if(node.nodeType !== 1) return;
+    if(node.tagName === "BR"){
+      outText.push("\n"); outSizes.push(inheritedSize);
+      return;
+    }
+    const nextSize = node.style && node.style.fontSize ? parseFloat(node.style.fontSize) || inheritedSize : inheritedSize;
+    for(const child of node.childNodes){ walk(child, nextSize); }
+  }
+  walk(el, parseFloat(el.style.fontSize) || size);
+  return { text: outText.join(""), sizes: outSizes };
+}
+
+function setCaretAt(el, offset){
+  if(!el || typeof offset !== "number") return;
+  const sel = window.getSelection();
+  if(!sel) return;
+  const range = document.createRange();
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let current = 0;
+  let node = walker.nextNode();
+  while(node){
+    const len = node.textContent.length;
+    if(offset <= current + len){
+      range.setStart(node, Math.max(0, offset - current));
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return;
+    }
+    current += len;
+    node = walker.nextNode();
+  }
+  range.setStart(el, el.childNodes.length);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 function ensureSheets(n){
   const d=dims();
   while(sheets.length<n){
     const sh=document.createElement("div"); sh.className="sheet";
-    const ta=document.createElement("textarea"); ta.spellcheck=false; ta.setAttribute("aria-label","Page text");
+    const ta=document.createElement("div"); ta.className="page-edit"; ta.spellcheck=false; ta.setAttribute("contenteditable","true");
     const idx=sheets.length;
     ta.addEventListener("input",()=>onInput(idx));
     ta.addEventListener("keydown",e=>onKey(e,idx));
@@ -163,9 +236,28 @@ function updateStatus(){
   document.title=(modified?"*":"")+fileName()+" - R-Writer";
 }
 
+function syncFromEditors(){
+  let nextText = ""; const nextSizes = [];
+  for(const ta of tas){
+    const page = readPageTextAndSizes(ta);
+    nextText += page.text;
+    nextSizes.push(...page.sizes);
+  }
+  text = nextText;
+  sizes = nextSizes;
+}
+
 function render(){
   paginate(); ensureSheets(ranges.length);
-  ranges.forEach(([s,e],i)=>{ const v=text.slice(s,e); if(tas[i].value!==v) tas[i].value=v; });
+  ranges.forEach(([s,e],i)=>{
+    const chunk = text.slice(s,e);
+    const chunkSizes = sizes.slice(s,e);
+    const current = readPageTextAndSizes(tas[i]);
+    const content = buildSizeMarkup(chunk, chunkSizes);
+    if(current.text !== chunk || current.text.length !== chunk.length){
+      tas[i].innerHTML = content;
+    }
+  });
   layoutScale();
   if(pending){
     const g=Math.min(pending.g,text.length);
@@ -173,9 +265,12 @@ function render(){
     if(pending.prefer!=null && pending.prefer<ranges.length && g>=ranges[pending.prefer][0] && g<=ranges[pending.prefer][1]) p=pending.prefer;
     const local=g-ranges[p][0];
     pending=null;
-    tas[p].focus(); tas[p].setSelectionRange(local,local); curPage=p;
+    tas[p].focus();
+    if(typeof tas[p].setSelectionRange === "function") tas[p].setSelectionRange(local,local);
+    else setCaretAt(tas[p], local);
+    curPage=p;
     const ta=tas[p]; const d=dims(); const lhs=d.lh*curScale;
-    const y=ta.getBoundingClientRect().top+(rowOf(ta.value,local)+1)*lhs;
+    const y=ta.getBoundingClientRect().top+(rowOf(ta.textContent,local)+1)*lhs;
     const barH=document.querySelector(".top").offsetHeight, stH=$("status").offsetHeight;
     if(y-lhs<barH+8) window.scrollBy(0,y-lhs-barH-40);
     else if(y>innerHeight-stH-8) window.scrollBy(0,y-innerHeight+stH+40);
@@ -184,38 +279,39 @@ function render(){
 }
 
 function onInput(i){
-  const [s,e]=ranges[i]; const ta=tas[i];
-  text=text.slice(0,s)+ta.value+text.slice(e); modified=true;
-  pending={g:s+ta.selectionStart, prefer:i};
+  syncFromEditors();
+  modified=true;
+  pending={g:ranges[i][0], prefer:i};
   render();
 }
 
 function onKey(ev,i){
   if(ev.ctrlKey||ev.metaKey||ev.altKey||ev.shiftKey) return;
-  const ta=tas[i]; if(ta.selectionStart!==ta.selectionEnd) return;
-  const [s,e]=ranges[i]; const local=ta.selectionStart; const v=ta.value; const n=ranges.length;
-  const go=g=>{ ev.preventDefault(); pending={g}; render(); };
-  switch(ev.key){
-    case "Backspace":
-      if(local===0 && i>0){ ev.preventDefault(); text=text.slice(0,s-1)+text.slice(s); modified=true; pending={g:s-1}; render(); }
-      break;
-    case "Delete":
-      if(local===v.length && e<text.length){ ev.preventDefault(); text=text.slice(0,e)+text.slice(e+1); modified=true; pending={g:e}; render(); }
-      break;
-    case "ArrowLeft": if(local===0 && i>0) go(s-1); break;
-    case "ArrowRight": if(local===v.length && i<n-1) go(Math.min(e+1,text.length)); break;
-    case "ArrowUp":
-      if(i>0 && rowOf(v,local)===0){
-        const col=local; const [ps,pe]=ranges[i-1]; const pv=text.slice(ps,pe);
-        const rs=rowStart(pv,pv.length); let len=pv.length-rs; if(pv.endsWith("\n")) len=Math.max(len-1,0);
-        go(ps+rs+Math.min(col,len));
-      } break;
-    case "ArrowDown":
-      if(i<n-1 && rowOf(v,local)===rowOf(v,v.length)){
-        const col=local-rowStart(v,local); const [ns,ne]=ranges[i+1]; const nv=text.slice(ns,ne);
-        let k=0; while(k<nv.length && rowOf(nv,k+1)<1 && nv[k]!=="\n") k++;
-        go(ns+Math.min(col,k));
-      } break;
+  const ta=tas[i]; if(typeof ta.selectionStart !== "undefined"){
+    const [s,e]=ranges[i]; const local=ta.selectionStart; const v=ta.value; const n=ranges.length;
+    const go=g=>{ ev.preventDefault(); pending={g}; render(); };
+    switch(ev.key){
+      case "Backspace":
+        if(local===0 && i>0){ ev.preventDefault(); text=text.slice(0,s-1)+text.slice(s); modified=true; pending={g:s-1}; render(); }
+        break;
+      case "Delete":
+        if(local===v.length && e<text.length){ ev.preventDefault(); text=text.slice(0,e)+text.slice(e+1); modified=true; pending={g:e}; render(); }
+        break;
+      case "ArrowLeft": if(local===0 && i>0) go(s-1); break;
+      case "ArrowRight": if(local===v.length && i<n-1) go(Math.min(e+1,text.length)); break;
+      case "ArrowUp":
+        if(i>0 && rowOf(v,local)===0){
+          const col=local; const [ps,pe]=ranges[i-1]; const pv=text.slice(ps,pe);
+          const rs=rowStart(pv,pv.length); let len=pv.length-rs; if(pv.endsWith("\n")) len=Math.max(len-1,0);
+          go(ps+rs+Math.min(col,len));
+        } break;
+      case "ArrowDown":
+        if(i<n-1 && rowOf(v,local)===rowOf(v,v.length)){
+          const col=local-rowStart(v,local); const [ns,ne]=ranges[i+1]; const nv=text.slice(ns,ne);
+          let k=0; while(k<nv.length && rowOf(nv,k+1)<1 && nv[k]!="\n") k++;
+          go(ns+Math.min(col,k));
+        } break;
+    }
   }
 }
 
@@ -276,7 +372,7 @@ async function buildDocx(){
   const zip=new JSZip();
   zip.file("[Content_Types].xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
   zip.file("_rels/.rels",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
-  zip.file("word/document.xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+body+'<w:sectPr><w:pgSz w:w="'+w+'" w:h="'+h+'"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>');
+  zip.file("word/document.xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+body+'<w:sectPr><w:pgSz w:w="'+w+'" w:h="'+h+'"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>');
   return zip.generateAsync({type:"blob",compression:"DEFLATE"});
 }
 
@@ -296,9 +392,9 @@ async function buildOdt(){
   const body=text.split("\n").map(l=>'<text:p text:style-name="P1">'+odtLine(l)+'</text:p>').join("");
   const zip=new JSZip();
   zip.file("mimetype","application/vnd.oasis.opendocument.text",{compression:"STORE"});
-  zip.file("META-INF/manifest.xml",'<?xml version="1.0" encoding="UTF-8"?>\n<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/></manifest:manifest>');
-  zip.file("styles.xml",'<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2"><office:automatic-styles><style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="'+cm[0]+'" fo:page-height="'+cm[1]+'" fo:margin-top="1.27cm" fo:margin-bottom="1.27cm" fo:margin-left="1.27cm" fo:margin-right="1.27cm"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"/></office:master-styles></office:document-styles>');
-  zip.file("content.xml",'<?xml version="1.0" encoding="UTF-8"?>\n<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.2"><office:font-face-decls><style:font-face style:name="'+font+'" svg:font-family="'+font+'"/></office:font-face-decls><office:automatic-styles><style:style style:name="P1" style:family="paragraph"><style:text-properties style:font-name="'+font+'" fo:font-size="'+(size*0.75)+'pt"/></style:style></office:automatic-styles><office:body><office:text>'+body+'</office:text></office:body></office:document-content>');
+  zip.file("META-INF/manifest.xml",'<?xml version="1.0" encoding="UTF-8"?>\n<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:media-type="application/vnd.oasis.opendocument.text" manifest:full-path="/"/><manifest:file-entry manifest:media-type="text/xml" manifest:full-path="content.xml"/></manifest:manifest>');
+  zip.file("styles.xml",'<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:officeooo="http://openoffice.org/2009/office" office:version="1.2"><office:automatic-styles/><office:master-styles/></office:document-styles>');
+  zip.file("content.xml",'<?xml version="1.0" encoding="UTF-8"?>\n<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.2"><office:automatic-styles><style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0cm"/></style:style></office:automatic-styles><office:body><office:text>'+body+'</office:text></office:body></office:document-content>');
   return zip.generateAsync({type:"blob",compression:"DEFLATE"});
 }
 
@@ -322,8 +418,8 @@ $("fileIn").addEventListener("change", async e=>{
       else if(ext==="odt") t=odtText(await z.file("content.xml").async("string"));
       else throw new Error("use a .docx, .odt or .txt file");
     }
-    text=t; modified=false; message="Opened "+f.name;
-    $("nameIn").value=f.name.replace(/\.[^.]+$/,"");
+    text=t; sizes=Array(text.length).fill(size); modified=false; message="Opened "+f.name;
+    $("nameIn").value=f.name.replace(/\.[^.]+$/,"" );
     pending={g:0}; render();
   }catch(err){ message="Open failed: "+(err&&err.message?err.message:err); updateStatus(); }
 });
@@ -378,7 +474,11 @@ document.addEventListener("keydown",e=>{
 $("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
 $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
 $("sizeIn").addEventListener("input",e=>{ const v=Math.max(8,Math.min(48,+e.target.value||14)); size=v; keep(); });
-function keep(){ const g=tas[curPage]?ranges[curPage][0]+tas[curPage].selectionStart:0; pending={g, prefer:curPage}; render(); }
+function keep(){
+  const g=tas[curPage]?ranges[curPage][0]+(tas[curPage].textContent||"").length:0;
+  pending={g, prefer:curPage};
+  render();
+}
 window.addEventListener("resize",layoutScale);
 
 window.addEventListener("beforeunload", e => {
