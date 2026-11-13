@@ -50,7 +50,7 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
       <button id="saveBtn" title="Ctrl+S">Save</button>
       <label>Name <input id="nameIn" type="text" value="document" aria-label="File name"></label>
       <span class="sep"></span>
-      <select id="pageSel" aria-label="Page size"><option value="A4">A4</option><option value="Letter">Letter</option></select>
+      <select id="pageSel" aria-label="Page size"><option value="A4">A4</option><option value="A5">A5</option></select>
       <select id="fontSel" aria-label="Font"></select>
       <label>Color <input id="colorSel" type="color" value="#111111" aria-label="Text color"></label>
       <label>Size <input id="sizeIn" type="number" min="8" max="48" value="14"> px</label>
@@ -88,8 +88,8 @@ const FONTS = [
   ["IBM Plex Mono", "'IBM Plex Mono','Consolas',monospace", "IBM Plex Mono"]
 ];
 
-const SIZES = { A4:[794,1123], Letter:[816,1056] };
-const TWIPS = { A4:[11906,16838], Letter:[12240,15840] };
+const SIZES = { A4:[794,1123], A5:[560,794] };
+const TWIPS = { A4:[11906,16838], A5:[8395,11908] };
 const M = 48, GAP = 24;
 const DEFAULT_COLOR = "#111111";
 
@@ -104,7 +104,7 @@ const $ = id => document.getElementById(id);
 const pagesEl = $("pages"), scaler = $("scaler"), canvas = $("canvas");
 
 const meas = document.createElement("div");
-meas.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre-wrap;overflow-wrap:break-word;padding:0;margin:0;border:0;box-sizing:content-box;";
+meas.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;padding:0;margin:0;border:0;box-sizing:content-box;";
 document.body.appendChild(meas);
 
 FONTS.forEach((f,i)=>{
@@ -118,15 +118,12 @@ $("colorSel").value = currentColor;
 
 function dims(){
   const [pw,ph]=SIZES[pageKey];
-  const maxTextSize = sizeMap.length
-    ? sizeMap.reduce((largest, v) => Math.max(largest, Number(v) || size), size)
-    : size;
   return {
     pw,
     ph,
     cw:pw-2*M,
     ch:ph-2*M,
-    lh:Math.ceil(maxTextSize * 1.35)
+    lh:Math.ceil(size * 1.35)
   };
 }
 
@@ -137,34 +134,47 @@ function applyMeas(){
   meas.style.fontSize=size+"px";
   meas.style.lineHeight=d.lh+"px";
 }
-function height(str){
-  meas.textContent = str + "\u200b";
+
+function heightRange(start, end){
+  if(end <= start) return dims().lh;
+  meas.innerHTML = buildPageHtml(
+    text.slice(start, end),
+    sizeMap.slice(start, end),
+    colorMap.slice(start, end),
+    lineHeightMap.slice(start, end)
+  ) + '<span style="font-size:' + size + 'px;line-height:' + dims().lh + 'px;">\u200b</span>';
   return meas.offsetHeight;
 }
-function rowOf(str, off){
-  return Math.round(height(str.slice(0,off))/dims().lh) - 1;
+
+function rowOfRange(start, end){
+  const h = heightRange(start, end);
+  const lastLh = end > start ? (lineHeightMap[end - 1] || dims().lh) : dims().lh;
+  return Math.max(0, Math.round(h / lastLh) - 1);
 }
-function rowStart(str, off){
-  const r=rowOf(str,off);
-  let lo=0, hi=off;
-  while(lo<hi){
-    const mid=(lo+hi)>>1;
-    if(rowOf(str,mid)>=r) hi=mid;
-    else lo=mid+1;
+
+function rowStart(pageStart, off){
+  const r = rowOfRange(pageStart, pageStart + off);
+  let lo = 0, hi = off;
+  while(lo < hi){
+    const mid = (lo + hi) >> 1;
+    if(rowOfRange(pageStart, pageStart + mid) >= r) hi = mid;
+    else lo = mid + 1;
   }
   return lo;
 }
-function fitCount(str, maxH){
-  let lo=0, hi=str.length;
-  while(lo<hi){
-    const mid=(lo+hi+1)>>1;
-    if(height(str.slice(0,mid))<=maxH) lo=mid;
-    else hi=mid-1;
+
+function fitCount(start, maxH){
+  const maxLen = text.length - start;
+  let lo = 0, hi = maxLen;
+  while(lo < hi){
+    const mid = (lo + hi + 1) >> 1;
+    if(heightRange(start, start + mid) <= maxH) lo = mid;
+    else hi = mid - 1;
   }
-  let k=Math.max(lo,1);
-  if(k<str.length && !/\s/.test(str[k-1]) && !/\s/.test(str[k])){
-    for(let j=k-1;j>0;j--){
-      if(/\s/.test(str[j-1])){ k=j; break; }
+  let k = Math.max(lo, 1);
+  if(k < maxLen && !/\s/.test(text[start + k - 1]) && !/\s/.test(text[start + k])){
+    for(let j = k - 1; j > 0; j--){
+      if(/\s/.test(text[start + j - 1])){ k = j; break; }
     }
   }
   return k;
@@ -176,16 +186,15 @@ function paginate(){
   ranges=[];
   let start=0;
   for(;;){
-    const rest=text.slice(start);
-    if(height(rest)<=ch){
-      ranges.push([start,text.length]);
+    if(heightRange(start, text.length) <= ch){
+      ranges.push([start, text.length]);
       break;
     }
-    const cut=fitCount(rest,ch);
-    ranges.push([start,start+cut]);
-    start+=cut;
-    if(start>=text.length){
-      ranges.push([start,start]);
+    const cut = fitCount(start, ch);
+    ranges.push([start, start + cut]);
+    start += cut;
+    if(start >= text.length){
+      ranges.push([start, start]);
       break;
     }
   }
@@ -247,6 +256,12 @@ function readPageStyles(el, defaultSize=size, defaultColor=currentColor){
       colors.push(inheritedColor);
       return;
     }
+    const isBlock = (node !== el && (node.tagName === "DIV" || node.tagName === "P"));
+    if(isBlock && out.length > 0 && out[out.length - 1] !== "\n"){
+      out+="\n";
+      sizes.push(inheritedSize);
+      colors.push(inheritedColor);
+    }
     let nextSize=inheritedSize;
     let nextColor=inheritedColor;
     if(node.style && node.style.fontSize){
@@ -300,9 +315,14 @@ function ensureSheets(n){
     ta.contentEditable="true";
     ta.spellcheck=false;
     ta.setAttribute("aria-label","Page text");
-    const idx=sheets.length;
-    ta.addEventListener("input",()=>onInput(idx));
-    ta.addEventListener("keydown",e=>onKey(e,idx));
+    ta.addEventListener("input",()=>{
+      const idx=tas.indexOf(ta);
+      if(idx!==-1) onInput(idx);
+    });
+    ta.addEventListener("keydown",e=>{
+      const idx=tas.indexOf(ta);
+      if(idx!==-1) onKey(e,idx);
+    });
     ta.addEventListener("focus",()=>{
       curPage=tas.indexOf(ta);
       updateStatus();
@@ -380,6 +400,17 @@ function caretOffsetWithin(root,target,targetOffset){
     return null;
   }
   return walk(root);
+}
+
+function getLocalSelection(ta){
+  const sel=window.getSelection();
+  if(!sel || sel.rangeCount===0) return null;
+  const r=sel.getRangeAt(0);
+  if(!ta.contains(r.startContainer) || !ta.contains(r.endContainer)) return null;
+  const start=caretOffsetWithin(ta,r.startContainer,r.startOffset);
+  const end=caretOffsetWithin(ta,r.endContainer,r.endOffset);
+  if(start===null || end===null) return null;
+  return { start: Math.min(start, end), end: Math.max(start, end) };
 }
 
 function currentCaretPosition(){
@@ -467,20 +498,20 @@ function render(){
     if(p<0) p=ranges.length-1;
     if(pending.prefer!=null && pending.prefer<ranges.length &&
        g>=ranges[pending.prefer][0] && g<=ranges[pending.prefer][1]) p=pending.prefer;
-    const local=g-ranges[p][0];
+    const [ps, pe] = ranges[p];
+    const local = g - ps;
     pending=null;
 
     const ta=tas[p];
     ta.focus();
     curPage=p;
     const d=dims();
-    const lhs=d.lh*curScale;
-    const content=ta.innerText || ta.textContent;
-    const y=ta.getBoundingClientRect().top + (rowOf(content, Math.min(local, content.length)) + 1) * lhs;
+    const lhs=(lineHeightMap[g] || d.lh)*curScale;
+    const y=ta.getBoundingClientRect().top + (rowOfRange(ps, ps + local) + 1) * lhs;
     const barH=document.querySelector(".top").offsetHeight;
     const stH=$("status").offsetHeight;
 
-    setCaretWithin(ta, Math.max(0, Math.min(local, ta.textContent.length)));
+    setCaretWithin(ta, Math.max(0, Math.min(local, pe - ps)));
     savedCaret=g;
 
     if(y-lhs<barH+8) window.scrollBy(0,y-lhs-barH-40);
@@ -516,9 +547,11 @@ function onInput(i){
     pageSizes[pageText.length-1-j]=oldSizes[oldText.length-1-j] ?? size;
     pageColors[pageText.length-1-j]=oldColors[oldText.length-1-j] ?? DEFAULT_COLOR;
   }
+
+  const inheritColor = (prefix > 0) ? (oldColors[prefix - 1] ?? currentColor) : currentColor;
   for(let j=prefix;j<pageText.length-suffix;j++){
     pageSizes[j]=size;
-    pageColors[j]=currentColor;
+    pageColors[j]=inheritColor;
   }
 
   text=text.slice(0,s)+pageText+text.slice(e);
@@ -537,64 +570,78 @@ function onInput(i){
 function onKey(ev,i){
   if(ev.ctrlKey||ev.metaKey||ev.altKey||ev.shiftKey) return;
   const ta=tas[i];
-  if(typeof ta.selectionStart==="number" && typeof ta.selectionEnd==="number"){
-    const [s,e]=ranges[i];
-    const local=ta.selectionStart;
-    const v=ta.value;
-    const n=ranges.length;
-    const go=g=>{ ev.preventDefault(); pending={g}; render(); };
+  const sel=getLocalSelection(ta);
+  if(!sel) return;
 
-    switch(ev.key){
-      case "Backspace":
-        if(local===0 && i>0){
-          ev.preventDefault();
-          text=text.slice(0,s-1)+text.slice(s);
-          sizeMap.splice(s-1,1);
-          colorMap.splice(s-1,1);
-          modified=true;
-          pending={g:s-1};
-          render();
-        }
-        break;
-      case "Delete":
-        if(local===v.length && e<text.length){
-          ev.preventDefault();
-          text=text.slice(0,e)+text.slice(e+1);
-          sizeMap.splice(e,1);
-          colorMap.splice(e,1);
-          modified=true;
-          pending={g:e};
-          render();
-        }
-        break;
-      case "ArrowLeft":
-        if(local===0 && i>0) go(s-1);
-        break;
-      case "ArrowRight":
-        if(local===v.length && i<n-1) go(Math.min(e+1,text.length));
-        break;
-      case "ArrowUp":
-        if(i>0 && rowOf(v,local)===0){
-          const col=local;
-          const [ps,pe]=ranges[i-1];
-          const pv=text.slice(ps,pe);
-          const rs=rowStart(pv,pv.length);
-          let len=pv.length-rs;
-          if(pv.endsWith("\n")) len=Math.max(len-1,0);
-          go(ps+rs+Math.min(col,len));
-        }
-        break;
-      case "ArrowDown":
-        if(i<n-1 && rowOf(v,local)===rowOf(v,v.length)){
-          const col=local-rowStart(v,local);
-          const [ns,ne]=ranges[i+1];
-          const nv=text.slice(ns,ne);
-          let k=0;
-          while(k<nv.length && rowOf(nv,k+1)<1 && nv[k]!="\n") k++;
-          go(ns+Math.min(col,k));
-        }
-        break;
+  const [s,e]=ranges[i];
+  const local=sel.start;
+  const collapsed=(sel.start===sel.end);
+  const pageLen=e-s;
+  const n=ranges.length;
+  const go=(g, prefer=null)=>{ ev.preventDefault(); pending={g, prefer}; render(); };
+
+  switch(ev.key){
+    case "Enter": {
+      ev.preventDefault();
+      const gStart = s + sel.start;
+      const gEnd = s + sel.end;
+      text = text.slice(0, gStart) + "\n" + text.slice(gEnd);
+      sizeMap.splice(gStart, gEnd - gStart, size);
+      colorMap.splice(gStart, gEnd - gStart, currentColor);
+      modified = true;
+      pending = { g: gStart + 1, prefer: i };
+      render();
+      break;
     }
+    case "Backspace":
+      if(collapsed && local===0 && i>0){
+        ev.preventDefault();
+        text=text.slice(0,s-1)+text.slice(s);
+        sizeMap.splice(s-1,1);
+        colorMap.splice(s-1,1);
+        modified=true;
+        pending={g:s-1};
+        render();
+      }
+      break;
+    case "Delete":
+      if(collapsed && local===pageLen && e<text.length){
+        ev.preventDefault();
+        text=text.slice(0,e)+text.slice(e+1);
+        sizeMap.splice(e,1);
+        colorMap.splice(e,1);
+        modified=true;
+        pending={g:e};
+        render();
+      }
+      break;
+    case "ArrowLeft":
+      if(collapsed && local===0 && i>0) go(s-1, i-1);
+      break;
+    case "ArrowRight":
+      if(collapsed && local===pageLen && i<n-1) go(Math.min(e+1,text.length), i+1);
+      break;
+    case "ArrowUp":
+      if(collapsed && i>0 && rowOfRange(s, s+local)===0){
+        const col=local;
+        const [ps,pe]=ranges[i-1];
+        const pv=text.slice(ps,pe);
+        const rs=rowStart(ps, pv.length);
+        let len=pv.length-rs;
+        if(pv.endsWith("\n")) len=Math.max(len-1,0);
+        go(ps+rs+Math.min(col,len), i-1);
+      }
+      break;
+    case "ArrowDown":
+      if(collapsed && i<n-1 && rowOfRange(s, s+local)===rowOfRange(s, e)){
+        const col=local-rowStart(s, local);
+        const [ns,ne]=ranges[i+1];
+        const nv=text.slice(ns,ne);
+        let k=0;
+        while(k<nv.length && rowOfRange(ns, ns+k+1)<1 && nv[k]!=="\n") k++;
+        go(ns+Math.min(col,k), i+1);
+      }
+      break;
   }
 }
 
@@ -827,7 +874,29 @@ document.addEventListener("keydown",e=>{
 
 $("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
 $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
-$("colorSel").addEventListener("input",e=>{ currentColor=e.target.value; keep(); });
+
+$("colorSel").addEventListener("input",e=>{
+  currentColor=e.target.value;
+  const sel=window.getSelection();
+  if(sel && sel.rangeCount>0 && !sel.isCollapsed){
+    for(let i=0; i<tas.length; i++){
+      const ta=tas[i];
+      const localSel=getLocalSelection(ta);
+      if(localSel){
+        const [s,e]=ranges[i];
+        const startG=s+localSel.start;
+        const endG=s+localSel.end;
+        for(let idx=startG; idx<endG; idx++){
+          colorMap[idx]=currentColor;
+        }
+        modified=true;
+        render();
+        return;
+      }
+    }
+  }
+});
+
 $("sizeIn").addEventListener("input",e=>{
   const v=Math.max(8,Math.min(48,+e.target.value||14));
   size=v;
