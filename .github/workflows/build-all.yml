@@ -13,11 +13,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-22.04
-            target: deb
+            target: "deb AppImage"
           - os: windows-latest
-            target: msi
+            target: "msi nsis"
           - os: macos-latest
-            target: dmg
+            target: "dmg"
 
     runs-on: ${{ matrix.os }}
 
