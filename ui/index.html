@@ -203,14 +203,17 @@ function paginate(){
 function escapeHtml(s){
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;");
 }
+
 function ensureSizeMapLength(){
-  while(sizeMap.length<text.length) sizeMap.push(size);
-  if(sizeMap.length>text.length) sizeMap.length=text.length;
+  while(sizeMap.length < text.length) sizeMap.push(size);
+  if(sizeMap.length > text.length) sizeMap.length = text.length;
 }
+
 function ensureColorMapLength(){
-  while(colorMap.length<text.length) colorMap.push(currentColor);
-  if(colorMap.length>text.length) colorMap.length=text.length;
+  while(colorMap.length < text.length) colorMap.push(currentColor);
+  if(colorMap.length > text.length) colorMap.length = text.length;
 }
+
 function rebuildLineHeightMap(){
   lineHeightMap = Array(text.length);
   let lineStart = 0;
@@ -704,6 +707,8 @@ function odtText(xml){
 }
 
 async function buildDocx(){
+  ensureSizeMapLength();
+  ensureColorMapLength();
   const [w,h]=TWIPS[pageKey];
   const font=esc(FONTS[fontIdx][2]);
   let body="";
@@ -894,8 +899,9 @@ $("colorSel").addEventListener("input",e=>{
     }
   }
   const caret = currentCaretPosition();
-  if(caret != null && caret < colorMap.length){
-    colorMap[caret] = currentColor;
+  ensureColorMapLength();
+  if(caret != null && caret > 0 && caret - 1 < colorMap.length){
+    colorMap[caret - 1] = currentColor;
   }
   modified = true;
 });
