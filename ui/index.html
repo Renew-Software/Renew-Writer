@@ -37,7 +37,7 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
 #canvas{flex:1; background:var(--canvas); padding:20px 0 40px;}
 #scaler{margin:0 auto; transform-origin:top center;}
 .sheet{position:relative; background:#fff; border-radius:2px; box-shadow:0 1px 3px rgba(0,0,0,.35);}
-.sheet .page-edit{scroll-margin:90px 0 50px; position:absolute; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:#111; padding:0; margin:0; white-space:pre-wrap; word-wrap:break-word; tab-size:4;}
+.sheet textarea{scroll-margin:90px 0 50px; position:absolute; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:#111; padding:0; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4;}
 .status{position:sticky; bottom:env(safe-area-inset-bottom,0px); z-index:20; padding:6px 12px; border-top:1px solid var(--bd); color:var(--mut); font-size:13px; background:var(--bar);}
 </style>
 </head>
@@ -89,7 +89,6 @@ let text = "", pageKey = "A4", fontIdx = 2, size = 14;
 let ranges = [[0,0]], pending = null, curPage = 0, curScale = 1;
 let tas = [], sheets = [], sizeMap = [];
 let modified = false, message = "";
-let savedCaret = null;
 
 const $ = id => document.getElementById(id);
 const pagesEl = $("pages"), scaler = $("scaler"), canvas = $("canvas");
@@ -130,59 +129,16 @@ function paginate(){
   }
 }
 
-function escapeHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;"); }
-
 function ensureSizeMapLength(){
   while(sizeMap.length < text.length) sizeMap.push(size);
   if(sizeMap.length > text.length) sizeMap.length = text.length;
-}
-
-function readPageSizes(el, defaultSize = size){
-  let out = "";
-  let sizes = [];
-  function walk(node, inheritedSize){
-    if(!node) return;
-    if(node.nodeType === 3){
-      const s=node.textContent || "";
-      for(const ch of s){ out += ch; sizes.push(inheritedSize); }
-      return;
-    }
-    if(node.nodeType !== 1) return;
-    if(node.tagName === "BR"){
-      out += "\n"; sizes.push(inheritedSize);
-      return;
-    }
-    let nextSize = inheritedSize;
-    if(node.style && node.style.fontSize){
-      const v=parseFloat(node.style.fontSize);
-      if(!Number.isNaN(v)) nextSize = v;
-    }
-    for(const child of node.childNodes){ walk(child, nextSize); }
-  }
-  walk(el, defaultSize);
-  return {text:out, sizes};
-}
-
-function buildPageHtml(part, partSizes){
-  if(!part) return "";
-  let html = "";
-  for(let i=0;i<part.length;i++){
-    const ch = part[i];
-    if(ch === "\n") { html += "<br>"; continue; }
-    const current = partSizes[i] ?? size;
-    let j = i + 1;
-    while(j < part.length && part[j] !== "\n" && (partSizes[j] ?? size) === current){ j++; }
-    html += '<span style="font-size:' + current + 'px;">' + escapeHtml(part.slice(i, j)) + '</span>';
-    i = j - 1;
-  }
-  return html;
 }
 
 function ensureSheets(n){
   const d=dims();
   while(sheets.length<n){
     const sh=document.createElement("div"); sh.className="sheet";
-    const ta=document.createElement("div"); ta.className="page-edit"; ta.contentEditable="true"; ta.spellcheck=false; ta.setAttribute("aria-label","Page text");
+    const ta=document.createElement("textarea"); ta.spellcheck=false; ta.setAttribute("aria-label","Page text");
     const idx=sheets.length;
     ta.addEventListener("input",()=>onInput(idx));
     ta.addEventListener("keydown",e=>onKey(e,idx));
@@ -194,9 +150,7 @@ function ensureSheets(n){
     sh.style.width=d.pw+"px"; sh.style.height=d.ph+"px"; sh.style.marginBottom=GAP+"px";
     const ta=tas[i];
     ta.style.left=M+"px"; ta.style.top=M+"px"; ta.style.width=d.cw+"px"; ta.style.height=d.ch+"px";
-    ta.style.fontFamily=FONTS[fontIdx][1];
-    ta.style.fontSize=size+"px";
-    ta.style.lineHeight=d.lh+"px";
+    ta.style.fontFamily=FONTS[fontIdx][1]; ta.style.fontSize=size+"px"; ta.style.lineHeight=d.lh+"px";
   });
 }
 
@@ -214,202 +168,88 @@ function updateStatus(){
   document.title=(modified?"*":"")+fileName()+" - R-Writer";
 }
 
-function caretOffsetWithin(root, target, targetOffset){
-  let offset = 0;
-  function walk(node){
-    if(node === target){
-      if(node.nodeType === 3){
-        return offset + Math.min(targetOffset, node.textContent.length);
-      }
-      const children = Array.from(node.childNodes);
-      for(let i=0; i<Math.min(targetOffset, children.length); i++){
-        offset += (children[i].nodeType === 3 ? children[i].textContent.length : 1);
-      }
-      return offset;
-    }
-    if(node.nodeType === 3){
-      offset += node.textContent.length;
-      return null;
-    }
-    if(node.nodeType === 1){
-      if(node.tagName === "BR"){
-        offset += 1;
-        return null;
-      }
-      for(const child of node.childNodes){
-        const res = walk(child);
-        if(res !== null) return res;
-      }
-    }
-    return null;
-  }
-  return walk(root);
-}
-
-function currentCaretPosition(){
-  const sel = window.getSelection();
-  if(!sel || sel.rangeCount === 0) return savedCaret;
-  for(let i=0; i<tas.length; i++){
-    const editor = tas[i];
-    if(!editor.contains(sel.anchorNode)) continue;
-    const local = caretOffsetWithin(editor, sel.anchorNode, sel.anchorOffset);
-    if(local !== null){
-      savedCaret = ranges[i][0] + local;
-      return savedCaret;
-    }
-  }
-  return savedCaret;
-}
-
-function setCaretWithin(root, wantedOffset){
-  const range = document.createRange();
-  let offset = 0;
-  let placed = false;
-  function walk(node){
-    if(placed) return;
-
-    if(node.nodeType === 3){
-      const len = node.textContent.length;
-      if(wantedOffset <= offset + len){
-        range.setStart(node, Math.max(0, wantedOffset - offset));
-        placed = true;
-      } else {
-        offset += len;
-      }
-      return;
-    }
-
-    if(node.nodeType === 1){
-      if(node.tagName === "BR"){
-        if(wantedOffset <= offset){
-          range.setStartBefore(node);
-          placed = true;
-        } else if(wantedOffset <= offset + 1){
-          range.setStartAfter(node);
-          placed = true;
-        } else {
-          offset++;
-        }
-        return;
-      }
-      for(const child of node.childNodes){
-        walk(child);
-        if(placed) return;
-      }
-    }
-  }
-
-  for(const child of root.childNodes){
-    walk(child);
-    if(placed) break;
-  }
-
-  if(!placed){
-    range.selectNodeContents(root);
-    range.collapse(false);
-  } else {
-    range.collapse(true);
-  }
-
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
-}
-
 function render(){
   paginate(); ensureSheets(ranges.length);
-  ranges.forEach(([s,e],i)=>{
-    const part = text.slice(s,e);
-    const partSizes = sizeMap.slice(s,e);
-    const html = buildPageHtml(part, partSizes);
-    if(tas[i].innerHTML !== html) tas[i].innerHTML = html;
-  });
+  ranges.forEach(([s,e],i)=>{ const v=text.slice(s,e); if(tas[i].value!==v) tas[i].value=v; });
   layoutScale();
-
   if(pending){
     const g=Math.min(pending.g,text.length);
     let p=ranges.findIndex(([s,e])=>g>=s&&g<e); if(p<0) p=ranges.length-1;
     if(pending.prefer!=null && pending.prefer<ranges.length && g>=ranges[pending.prefer][0] && g<=ranges[pending.prefer][1]) p=pending.prefer;
     const local=g-ranges[p][0];
     pending=null;
-
-    const ta=tas[p];
-    ta.focus();
-    curPage=p;
-    const d=dims(); const lhs=d.lh*curScale;
-    const y=ta.getBoundingClientRect().top+(rowOf(ta.innerText || ta.textContent, Math.min(local, (ta.innerText || ta.textContent).length))+1)*lhs;
+    tas[p].focus(); tas[p].setSelectionRange(local,local); curPage=p;
+    const ta=tas[p]; const d=dims(); const lhs=d.lh*curScale;
+    const y=ta.getBoundingClientRect().top+(rowOf(ta.value,local)+1)*lhs;
     const barH=document.querySelector(".top").offsetHeight, stH=$("status").offsetHeight;
-
-    setCaretWithin(ta, Math.max(0, Math.min(local, ta.textContent.length)));
-    savedCaret = g;
-
     if(y-lhs<barH+8) window.scrollBy(0,y-lhs-barH-40);
     else if(y>innerHeight-stH-8) window.scrollBy(0,y-innerHeight+stH+40);
   }
-
   updateStatus();
 }
 
 function onInput(i){
-  const [s,e]=ranges[i];
-  const caretBefore = currentCaretPosition();
-  const oldText = text.slice(s,e);
-  const oldSizes = sizeMap.slice(s,e);
-  const parsed = readPageSizes(tas[i], size);
-  let pageText = parsed.text;
-  let pageSizes = parsed.sizes;
-
-  let prefix = 0;
-  while(prefix < oldText.length && prefix < pageText.length && oldText[prefix] === pageText[prefix]) prefix++;
-
-  let suffix = 0;
-  while(suffix < oldText.length - prefix && suffix < pageText.length - prefix &&
-        oldText[oldText.length - 1 - suffix] === pageText[pageText.length - 1 - suffix]) suffix++;
-
-  for(let j=0; j<prefix; j++) pageSizes[j] = oldSizes[j] ?? size;
-  for(let j=0; j<suffix; j++) pageSizes[pageText.length - 1 - j] = oldSizes[oldSizes.length - 1 - j] ?? size;
-  for(let j=prefix; j<pageText.length - suffix; j++) pageSizes[j] = size;
-
-  text = text.slice(0,s) + pageText + text.slice(e);
-  const before = sizeMap.slice(0,s);
-  const after = sizeMap.slice(e);
-  sizeMap = before.concat(pageSizes, after);
+  const [s,e]=ranges[i]; const ta=tas[i];
+  text=text.slice(0,s)+ta.value+text.slice(e); modified=true;
   ensureSizeMapLength();
-  modified = true;
-
-  const targetCaret = caretBefore != null ? caretBefore : s + pageText.length;
-  pending={g:targetCaret, prefer:i};
+  pending={g:s+ta.selectionStart, prefer:i};
   render();
 }
 
 function onKey(ev,i){
-  if(ev.ctrlKey||ev.metaKey||ev.altKey||ev.shiftKey) return;
   const ta=tas[i];
-  if(typeof ta.selectionStart === "number" && typeof ta.selectionEnd === "number"){
-    const [s,e]=ranges[i]; const local=ta.selectionStart; const v=ta.value; const n=ranges.length;
-    const go=g=>{ ev.preventDefault(); pending={g}; render(); };
-    switch(ev.key){
-      case "Backspace":
-        if(local===0 && i>0){ ev.preventDefault(); text=text.slice(0,s-1)+text.slice(s); modified=true; pending={g:s-1}; render(); }
-        break;
-      case "Delete":
-        if(local===v.length && e<text.length){ ev.preventDefault(); text=text.slice(0,e)+text.slice(e+1); modified=true; pending={g:e}; render(); }
-        break;
-      case "ArrowLeft": if(local===0 && i>0) go(s-1); break;
-      case "ArrowRight": if(local===v.length && i<n-1) go(Math.min(e+1,text.length)); break;
-      case "ArrowUp":
-        if(i>0 && rowOf(v,local)===0){
-          const col=local; const [ps,pe]=ranges[i-1]; const pv=text.slice(ps,pe);
-          const rs=rowStart(pv,pv.length); let len=pv.length-rs; if(pv.endsWith("\n")) len=Math.max(len-1,0);
-          go(ps+rs+Math.min(col,len));
-        } break;
-      case "ArrowDown":
-        if(i<n-1 && rowOf(v,local)===rowOf(v,v.length)){
-          const col=local-rowStart(v,local); const [ns,ne]=ranges[i+1]; const nv=text.slice(ns,ne);
-          let k=0; while(k<nv.length && rowOf(nv,k+1)<1 && nv[k]!="\n") k++;
-          go(ns+Math.min(col,k));
-        } break;
-    }
+  const [s,e]=ranges[i]; const local=ta.selectionStart; const v=ta.value; const n=ranges.length;
+  const go=g=>{ ev.preventDefault(); pending={g}; render(); };
+
+  if(ev.key === "Enter" && ta.selectionStart === ta.selectionEnd){
+    ev.preventDefault();
+    const pos = s + local;
+    text = text.slice(0, pos) + "\n" + text.slice(pos);
+    sizeMap.splice(pos, 0, size);
+    modified = true;
+    pending = { g: pos + 1 };
+    render();
+    return;
+  }
+
+  if(ev.ctrlKey||ev.metaKey||ev.altKey||ev.shiftKey) return;
+  if(ta.selectionStart!==ta.selectionEnd) return;
+
+  switch(ev.key){
+    case "Backspace":
+      if(local===0 && i>0){
+        ev.preventDefault();
+        text=text.slice(0,s-1)+text.slice(s);
+        sizeMap.splice(s-1, 1);
+        modified=true;
+        pending={g:s-1};
+        render();
+      }
+      break;
+    case "Delete":
+      if(local===v.length && e<text.length){
+        ev.preventDefault();
+        text=text.slice(0,e)+text.slice(e+1);
+        sizeMap.splice(e, 1);
+        modified=true;
+        pending={g:e};
+        render();
+      }
+      break;
+    case "ArrowLeft": if(local===0 && i>0) go(s-1); break;
+    case "ArrowRight": if(local===v.length && i<n-1) go(Math.min(e+1,text.length)); break;
+    case "ArrowUp":
+      if(i>0 && rowOf(v,local)===0){
+        const col=local; const [ps,pe]=ranges[i-1]; const pv=text.slice(ps,pe);
+        const rs=rowStart(pv,pv.length); let len=pv.length-rs; if(pv.endsWith("\n")) len=Math.max(len-1,0);
+        go(ps+rs+Math.min(col,len));
+      } break;
+    case "ArrowDown":
+      if(i<n-1 && rowOf(v,local)===rowOf(v,v.length)){
+        const col=local-rowStart(v,local); const [ns,ne]=ranges[i+1]; const nv=text.slice(ns,ne);
+        let k=0; while(k<nv.length && rowOf(nv,k+1)<1 && nv[k]!=="\n") k++;
+        go(ns+Math.min(col,k));
+      } break;
   }
 }
 
@@ -513,7 +353,7 @@ async function buildOdt(){
         i++;
         charIdx++;
       }
-      body += '<text:span text:style-name="S_' + sz + '">' + odtLine(runText) + '</text:span>';
+      body += '<text:span text:style-name="S_' + sz + '">' + esc(runText) + '</text:span>';
     }
     charIdx++;
     body += '</text:p>';
@@ -609,12 +449,7 @@ document.addEventListener("keydown",e=>{
 $("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
 $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
 $("sizeIn").addEventListener("input",e=>{ const v=Math.max(8,Math.min(48,+e.target.value||14)); size=v; keep(); });
-function keep(){
-  const caret = currentCaretPosition();
-  const g = caret != null ? caret : (tas[curPage] ? ranges[curPage][0] + (tas[curPage].innerText || tas[curPage].textContent || "").length : 0);
-  pending={g, prefer:curPage};
-  render();
-}
+function keep(){ const g=tas[curPage]?ranges[curPage][0]+tas[curPage].selectionStart:0; pending={g, prefer:curPage}; render(); }
 window.addEventListener("resize",layoutScale);
 
 window.addEventListener("beforeunload", e => {
