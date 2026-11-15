@@ -272,8 +272,7 @@ function ensureSheets(n){
       text = text.slice(0,s) + newSub + text.slice(e);
       modified = true;
       pending = { g: caretGlobalBefore, top: false };
-      updateStatus();
-      scrollCursorIntoView(false);
+      render();
     });
 
     ed.addEventListener("keydown", e => {
