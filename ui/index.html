@@ -37,8 +37,7 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
 #canvas{flex:1; background:var(--canvas); padding:20px 0 40px;}
 #scaler{margin:0 auto; transform-origin:top center;}
 .sheet{position:relative; background:#fff; border-radius:2px; box-shadow:0 1px 3px rgba(0,0,0,.35); overflow:hidden;}
-.sheet .content-layer{position:absolute; border:0; outline:0; padding:0 !important; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4; pointer-events:none; box-sizing:border-box;}
-.sheet textarea{position:absolute; inset:0; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:transparent; caret-color:#111; padding:0 !important; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4; z-index:2; box-sizing:border-box;}
+.sheet textarea{scroll-margin:90px 0 50px; position:absolute; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:#1b1b1b; caret-color:#111; padding:0; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4;}
 .status{position:sticky; bottom:env(safe-area-inset-bottom,0px); z-index:20; padding:6px 12px; border-top:1px solid var(--bd); color:var(--mut); font-size:13px; background:var(--bar);}
 </style>
 </head>
@@ -90,60 +89,43 @@ const M = 48, GAP = 24;
 let text = "", pageKey = "A4", fontIdx = 2, currentTypingSize = 14;
 let sizeMap = [];
 let ranges = [[0,0]], pending = null, curPage = 0, curScale = 1;
-let sheets = [], contentLayers = [], tas = [];
+let tas = [], sheets = [];
 let modified = false, message = "";
 
 const $ = id => document.getElementById(id);
 const pagesEl = $("pages"), scaler = $("scaler"), canvas = $("canvas");
 
 const meas = document.createElement("div");
-meas.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre-wrap;overflow-wrap:break-word;padding:0 !important;margin:0;border:0;box-sizing:border-box;";
+meas.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre-wrap;overflow-wrap:break-word;padding:0;margin:0;border:0;box-sizing:content-box;";
 document.body.appendChild(meas);
 
 FONTS.forEach((f,i)=>{ const o=document.createElement("option"); o.value=i; o.textContent=f[0]; $("fontSel").appendChild(o); });
 $("fontSel").value = fontIdx;
 
-function dims(){ const [pw,ph]=SIZES[pageKey]; return {pw, ph, cw:pw-2*M, ch:ph-2*M}; }
+function dims(){ const [pw,ph]=SIZES[pageKey]; return {pw, ph, cw:pw-2*M, ch:ph-2*M, lh:Math.round(currentTypingSize*1.35)}; }
+function applyMeas(){ const d=dims(); meas.style.width=d.cw+"px"; meas.style.fontFamily=FONTS[fontIdx][1]; meas.style.fontSize=currentTypingSize+"px"; meas.style.lineHeight=d.lh+"px"; }
+function height(str){ meas.textContent = str + "\u200b"; return meas.offsetHeight; }
+function rowOf(str, off){ return Math.round(height(str.slice(0,off))/dims().lh) - 1; }
+function rowStart(str, off){ const r=rowOf(str,off); let lo=0, hi=off; while(lo<hi){ const mid=(lo+hi)>>1; if(rowOf(str,mid)>=r) hi=mid; else lo=mid+1; } return lo; }
 
-function measureString(str, startIndex = 0) {
-  meas.style.width = dims().cw + "px";
-  meas.style.fontFamily = FONTS[fontIdx][1];
-  
-  let html = "";
-  let i = 0;
-  while(i < str.length) {
-    let sz = sizeMap[startIndex + i] ?? currentTypingSize;
-    let run = "";
-    while(i < str.length && (sizeMap[startIndex + i] ?? currentTypingSize) === sz) {
-      run += str[i];
-      i++;
-    }
-    let lh = Math.round(sz * 1.35);
-    html += `<span style="font-size:${sz}px; line-height:${lh}px">${escapeHtml(run)}</span>`;
-  }
-  meas.innerHTML = html + "\u200b";
-  return meas.offsetHeight;
-}
-
-function escapeHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
-
-function fitCount(rest, maxH, startIndex){
-  let lo=0, hi=rest.length;
-  while(lo<hi){ const mid=(lo+hi+1)>>1; if(measureString(rest.slice(0,mid), startIndex)<=maxH) lo=mid; else hi=mid-1; }
+function fitCount(str, maxH){
+  let lo=0, hi=str.length;
+  while(lo<hi){ const mid=(lo+hi+1)>>1; if(height(str.slice(0,mid))<=maxH) lo=mid; else hi=mid-1; }
   let k=Math.max(lo,1);
-  if(k<rest.length && !/\s/.test(rest[k-1]) && !/\s/.test(rest[k])){
-    for(let j=k-1;j>0;j--){ if(/\s/.test(rest[j-1])){ k=j; break; } }
+  if(k<str.length && !/\s/.test(str[k-1]) && !/\s/.test(str[k])){
+    for(let j=k-1;j>0;j--){ if(/\s/.test(str[j-1])){ k=j; break; } }
   }
   return k;
 }
 
 function paginate(){
+  applyMeas();
   const {ch}=dims();
   ranges=[]; let start=0;
   for(;;){
     const rest=text.slice(start);
-    if(measureString(rest, start)<=ch){ ranges.push([start,text.length]); break; }
-    const cut=fitCount(rest, ch, start);
+    if(height(rest)<=ch){ ranges.push([start,text.length]); break; }
+    const cut=fitCount(rest,ch);
     ranges.push([start,start+cut]); start+=cut;
     if(start>=text.length){ ranges.push([start,start]); break; }
   }
@@ -154,40 +136,23 @@ function ensureSizeMapLength(){
   if(sizeMap.length > text.length) sizeMap.length = text.length;
 }
 
-function updateTextareaSize(i) {
-  const ta = tas[i];
-  if(!ta) return;
-  const [s] = ranges[i];
-  const globalPos = s + ta.selectionStart;
-  const activeSz = sizeMap[globalPos] !== undefined ? sizeMap[globalPos] : currentTypingSize;
-  ta.style.fontSize = activeSz + "px";
-  ta.style.lineHeight = Math.round(activeSz * 1.35) + "px";
-}
-
 function ensureSheets(n){
   const d=dims();
   while(sheets.length<n){
     const sh=document.createElement("div"); sh.className="sheet";
-    const cl=document.createElement("div"); cl.className="content-layer";
     const ta=document.createElement("textarea"); ta.spellcheck=false; ta.setAttribute("aria-label","Page text");
     const idx=sheets.length;
-    ta.addEventListener("input",()=>{ updateTextareaSize(idx); onInput(idx); });
+    ta.addEventListener("input",()=>onInput(idx));
     ta.addEventListener("keydown",e=>onKey(e,idx));
-    ta.addEventListener("click",()=>updateTextareaSize(idx));
-    ta.addEventListener("keyup",()=>updateTextareaSize(idx));
-    ta.addEventListener("focus",()=>{ curPage=tas.indexOf(ta); updateTextareaSize(idx); updateStatus(); });
-    sh.appendChild(cl); sh.appendChild(ta); pagesEl.appendChild(sh);
-    sheets.push(sh); contentLayers.push(cl); tas.push(ta);
+    ta.addEventListener("focus",()=>{ curPage=tas.indexOf(ta); updateStatus(); });
+    sh.appendChild(ta); pagesEl.appendChild(sh); sheets.push(sh); tas.push(ta);
   }
-  while(sheets.length>n){ const sh=sheets.pop(); tas.pop(); contentLayers.pop(); sh.remove(); }
+  while(sheets.length>n){ const sh=sheets.pop(); tas.pop(); sh.remove(); }
   sheets.forEach((sh,i)=>{
     sh.style.width=d.pw+"px"; sh.style.height=d.ph+"px"; sh.style.marginBottom=GAP+"px";
-    const cl=contentLayers[i], ta=tas[i];
-    [cl, ta].forEach(el=>{
-      el.style.left=M+"px"; el.style.top=M+"px"; el.style.width=d.cw+"px"; el.style.height=d.ch+"px";
-      el.style.fontFamily=FONTS[fontIdx][1];
-    });
-    updateTextareaSize(i);
+    const ta=tas[i];
+    ta.style.left=M+"px"; ta.style.top=M+"px"; ta.style.width=d.cw+"px"; ta.style.height=d.ch+"px";
+    ta.style.fontFamily=FONTS[fontIdx][1]; ta.style.fontSize=currentTypingSize+"px"; ta.style.lineHeight=d.lh+"px";
   });
 }
 
@@ -207,27 +172,8 @@ function updateStatus(){
 
 function render(){
   ensureSizeMapLength();
-  paginate();
-  ensureSheets(ranges.length);
-  ranges.forEach(([s,e],i)=>{
-    const subText=text.slice(s,e);
-    const ta=tas[i];
-    if(ta.value!==subText) ta.value=subText;
-    
-    let html = "";
-    let idx = s;
-    while(idx < e) {
-      let sz = sizeMap[idx] ?? currentTypingSize;
-      let run = "";
-      while(idx < e && (sizeMap[idx] ?? currentTypingSize) === sz) {
-        run += text[idx];
-        idx++;
-      }
-      let lh = Math.round(sz * 1.35);
-      html += `<span style="font-size:${sz}px; line-height:${lh}px">${escapeHtml(run)}</span>`;
-    }
-    contentLayers[i].innerHTML = html;
-  });
+  paginate(); ensureSheets(ranges.length);
+  ranges.forEach(([s,e],i)=>{ const v=text.slice(s,e); if(tas[i].value!==v) tas[i].value=v; });
   layoutScale();
   if(pending){
     const g=Math.min(pending.g,text.length);
@@ -236,7 +182,11 @@ function render(){
     const local=g-ranges[p][0];
     pending=null;
     tas[p].focus(); tas[p].setSelectionRange(local,local); curPage=p;
-    updateTextareaSize(p);
+    const ta=tas[p]; const d=dims(); const lhs=d.lh*curScale;
+    const y=ta.getBoundingClientRect().top+(rowOf(ta.value,local)+1)*lhs;
+    const barH=document.querySelector(".top").offsetHeight, stH=$("status").offsetHeight;
+    if(y-lhs<barH+8) window.scrollBy(0,y-lhs-barH-40);
+    else if(y>innerHeight-stH-8) window.scrollBy(0,y-innerHeight+stH+40);
   }
   updateStatus();
 }
@@ -257,8 +207,8 @@ function onInput(i){
     sizeMap.splice(s + cursorLocal, -insertedLen);
   }
   
-  modified = true;
-  pending = { g: s + cursorLocal, prefer: i };
+  modified=true;
+  pending={g:s+cursorLocal, prefer:i};
   render();
 }
 
@@ -278,10 +228,8 @@ function onKey(ev,i){
     return;
   }
 
-  if(ev.ctrlKey||ev.metaKey||ev.altKey||ev.shiftKey) {
-    setTimeout(()=>updateTextareaSize(i), 10);
-    return;
-  }
+  if(ev.ctrlKey||ev.metaKey||ev.altKey||ev.shiftKey) return;
+  if(ta.selectionStart!==ta.selectionEnd) return;
 
   switch(ev.key){
     case "Backspace":
@@ -292,8 +240,6 @@ function onKey(ev,i){
         modified=true;
         pending={g:s-1};
         render();
-      } else {
-        setTimeout(()=>updateTextareaSize(i), 10);
       }
       break;
     case "Delete":
@@ -304,19 +250,26 @@ function onKey(ev,i){
         modified=true;
         pending={g:e};
         render();
-      } else {
-        setTimeout(()=>updateTextareaSize(i), 10);
       }
       break;
-    case "ArrowLeft": if(local===0 && i>0) go(s-1); else setTimeout(()=>updateTextareaSize(i), 10); break;
-    case "ArrowRight": if(local===v.length && i<n-1) go(Math.min(e+1,text.length)); else setTimeout(()=>updateTextareaSize(i), 10); break;
-    default:
-      setTimeout(()=>updateTextareaSize(i), 10);
-      break;
+    case "ArrowLeft": if(local===0 && i>0) go(s-1); break;
+    case "ArrowRight": if(local===v.length && i<n-1) go(Math.min(e+1,text.length)); break;
+    case "ArrowUp":
+      if(i>0 && rowOf(v,local)===0){
+        const col=local; const [ps,pe]=ranges[i-1]; const pv=text.slice(ps,pe);
+        const rs=rowStart(pv,pv.length); let len=pv.length-rs; if(pv.endsWith("\n")) len=Math.max(len-1,0);
+        go(ps+rs+Math.min(col,len));
+      } break;
+    case "ArrowDown":
+      if(i<n-1 && rowOf(v,local)===rowOf(v,v.length)){
+        const col=local-rowStart(v,local); const [ns,ne]=ranges[i+1]; const nv=text.slice(ns,ne);
+        let k=0; while(k<nv.length && rowOf(nv,k+1)<1 && nv[k]!=="\n") k++;
+        go(ns+Math.min(col,k));
+      } break;
   }
 }
 
-/* ---------- file formats & saving ---------- */
+/* ---------- file formats ---------- */
 async function buildDocx(){
   const [w,h]=TWIPS[pageKey]; const font=escapeHtml(FONTS[fontIdx][2]);
   let body="";
@@ -466,20 +419,11 @@ document.addEventListener("keydown",e=>{
 
 $("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
 $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
-
-$("sizeIn").addEventListener("input", e => {
+$("sizeIn").addEventListener("input",e=>{
   currentTypingSize = Math.max(8, Math.min(48, +e.target.value || 14));
-  if(tas[curPage]) {
-    tas[curPage].focus();
-    updateTextareaSize(curPage);
-  }
+  keep();
 });
-
-function keep(){ 
-  const g=tas[curPage]?ranges[curPage][0]+tas[curPage].selectionStart:0; 
-  pending={g, prefer:curPage}; 
-  render(); 
-}
+function keep(){ const g=tas[curPage]?ranges[curPage][0]+tas[curPage].selectionStart:0; pending={g, prefer:curPage}; render(); }
 window.addEventListener("resize",layoutScale);
 
 window.addEventListener("beforeunload", e => {
