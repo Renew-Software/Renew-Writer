@@ -37,8 +37,8 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
 #canvas{flex:1; background:var(--canvas); padding:20px 0 40px;}
 #scaler{margin:0 auto; transform-origin:top center;}
 .sheet{position:relative; background:#fff; border-radius:2px; box-shadow:0 1px 3px rgba(0,0,0,.35); overflow:hidden;}
-.sheet .content-layer{position:absolute; border:0; outline:0; padding:0; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4; line-height:1.35; pointer-events:none;}
-.sheet textarea{position:absolute; inset:0; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:transparent; caret-color:#111; padding:0; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4; z-index:2; line-height:1.35;}
+.sheet .content-layer{position:absolute; border:0; outline:0; padding:0; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4; line-height:1.2; pointer-events:none;}
+.sheet textarea{position:absolute; inset:0; border:0; outline:0; resize:none; overflow:hidden; background:transparent; color:transparent; caret-color:#111; padding:0; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4; z-index:2; line-height:1.2;}
 .status{position:sticky; bottom:env(safe-area-inset-bottom,0px); z-index:20; padding:6px 12px; border-top:1px solid var(--bd); color:var(--mut); font-size:13px; background:var(--bar);}
 </style>
 </head>
@@ -97,7 +97,7 @@ const $ = id => document.getElementById(id);
 const pagesEl = $("pages"), scaler = $("scaler"), canvas = $("canvas");
 
 const meas = document.createElement("div");
-meas.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre-wrap;overflow-wrap:break-word;padding:0;margin:0;border:0;box-sizing:content-box;line-height:1.35;";
+meas.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre-wrap;overflow-wrap:break-word;padding:0;margin:0;border:0;box-sizing:content-box;line-height:1.2;";
 document.body.appendChild(meas);
 
 FONTS.forEach((f,i)=>{ const o=document.createElement("option"); o.value=i; o.textContent=f[0]; $("fontSel").appendChild(o); });
@@ -118,7 +118,7 @@ function measureString(str, startIndex = 0) {
       run += str[i];
       i++;
     }
-    html += `<span style="font-size:${sz}px; line-height:1.35">${escapeHtml(run)}</span>`;
+    html += `<span style="font-size:${sz}px; line-height:1.2">${escapeHtml(run)}</span>`;
   }
   meas.innerHTML = html + "\u200b";
   return meas.offsetHeight;
@@ -153,6 +153,22 @@ function ensureSizeMapLength(){
   if(sizeMap.length > text.length) sizeMap.length = text.length;
 }
 
+function updateTextareaSize(i) {
+  const ta = tas[i];
+  if(!ta) return;
+  const [s] = ranges[i];
+  const globalPos = s + ta.selectionStart;
+  // If cursor is at empty space or end, use currentTypingSize, otherwise use the size of the character at cursor
+  let activeSz = currentTypingSize;
+  if(globalPos < text.length && sizeMap[globalPos] !== undefined) {
+    activeSz = sizeMap[globalPos];
+  } else if(globalPos > 0 && globalPos === text.length && sizeMap[globalPos - 1] !== undefined) {
+    activeSz = sizeMap[globalPos - 1];
+  }
+  ta.style.fontSize = activeSz + "px";
+  ta.style.lineHeight = "1.2";
+}
+
 function ensureSheets(n){
   const d=dims();
   while(sheets.length<n){
@@ -160,9 +176,11 @@ function ensureSheets(n){
     const cl=document.createElement("div"); cl.className="content-layer";
     const ta=document.createElement("textarea"); ta.spellcheck=false; ta.setAttribute("aria-label","Page text");
     const idx=sheets.length;
-    ta.addEventListener("input",()=>onInput(idx));
+    ta.addEventListener("input",()=>{ updateTextareaSize(idx); onInput(idx); });
     ta.addEventListener("keydown",e=>onKey(e,idx));
-    ta.addEventListener("focus",()=>{ curPage=tas.indexOf(ta); updateStatus(); });
+    ta.addEventListener("click",()=>updateTextareaSize(idx));
+    ta.addEventListener("keyup",()=>updateTextareaSize(idx));
+    ta.addEventListener("focus",()=>{ curPage=tas.indexOf(ta); updateTextareaSize(idx); updateStatus(); });
     sh.appendChild(cl); sh.appendChild(ta); pagesEl.appendChild(sh);
     sheets.push(sh); contentLayers.push(cl); tas.push(ta);
   }
@@ -173,8 +191,8 @@ function ensureSheets(n){
     [cl, ta].forEach(el=>{
       el.style.left=M+"px"; el.style.top=M+"px"; el.style.width=d.cw+"px"; el.style.height=d.ch+"px";
       el.style.fontFamily=FONTS[fontIdx][1];
-      el.style.fontSize=currentTypingSize+"px";
     });
+    updateTextareaSize(i);
   });
 }
 
@@ -210,7 +228,7 @@ function render(){
         run += text[idx];
         idx++;
       }
-      html += `<span style="font-size:${sz}px; line-height:1.35">${escapeHtml(run)}</span>`;
+      html += `<span style="font-size:${sz}px; line-height:1.2">${escapeHtml(run)}</span>`;
     }
     contentLayers[i].innerHTML = html;
   });
@@ -222,6 +240,7 @@ function render(){
     const local=g-ranges[p][0];
     pending=null;
     tas[p].focus(); tas[p].setSelectionRange(local,local); curPage=p;
+    updateTextareaSize(p);
   }
   updateStatus();
 }
@@ -249,7 +268,7 @@ function onInput(i){
 
 function onKey(ev,i){
   const ta=tas[i];
-  const [s,e]=ranges[i]; const local=ta.selectionStart; const v=ta.value; const n=ranges.length;
+  const [s,e]=ranges[i]; const local=ta.selectionStart; const v=ta.value;
   const go=g=>{ ev.preventDefault(); pending={g}; render(); };
 
   if(ev.key === "Enter" && ta.selectionStart === ta.selectionEnd){
@@ -263,8 +282,10 @@ function onKey(ev,i){
     return;
   }
 
-  if(ev.ctrlKey||ev.metaKey||ev.altKey||ev.shiftKey) return;
-  if(ta.selectionStart!==ta.selectionEnd) return;
+  if(ev.ctrlKey||ev.metaKey||ev.altKey||ev.shiftKey) {
+    setTimeout(()=>updateTextareaSize(i), 10);
+    return;
+  }
 
   switch(ev.key){
     case "Backspace":
@@ -275,6 +296,8 @@ function onKey(ev,i){
         modified=true;
         pending={g:s-1};
         render();
+      } else {
+        setTimeout(()=>updateTextareaSize(i), 10);
       }
       break;
     case "Delete":
@@ -285,10 +308,19 @@ function onKey(ev,i){
         modified=true;
         pending={g:e};
         render();
+      } else {
+        setTimeout(()=>updateTextareaSize(i), 10);
       }
       break;
-    case "ArrowLeft": if(local===0 && i>0) go(s-1); break;
-    case "ArrowRight": if(local===v.length && i<n-1) go(Math.min(e+1,text.length)); break;
+    case "ArrowLeft": if(local===0 && i>0) go(s-1); else setTimeout(()=>updateTextareaSize(i), 10); break;
+    case "ArrowRight": if(local===v.length && i<n-1) go(Math.min(e+1,text.length)); else setTimeout(()=>updateTextareaSize(i), 10); break;
+    case "ArrowUp":
+    case "ArrowDown":
+      setTimeout(()=>updateTextareaSize(i), 10);
+      break;
+    default:
+      setTimeout(()=>updateTextareaSize(i), 10);
+      break;
   }
 }
 
@@ -373,7 +405,7 @@ function guard(fn){ if(!modified){ fn(); return; } afterAsk=fn; $("ask").style.d
 $("askYes").onclick=()=>{ $("ask").style.display="none"; const f=afterAsk; afterAsk=null; if(f) f(); };
 $("askNo").onclick=()=>{ $("ask").style.display="none"; afterAsk=null; };
 
-function openDlg(){ $("fileIn").value=""; $("fileIn").click(); }
+function openDlg(){ $("fileIn").value=""; $("fileIn".click ? "fileIn").click() : $("fileIn").click(); }
 
 $("fileIn").addEventListener("change", async e=>{
   const f=e.target.files[0]; if(!f) return;
@@ -445,11 +477,17 @@ $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
 
 $("sizeIn").addEventListener("input", e => {
   currentTypingSize = Math.max(8, Math.min(48, +e.target.value || 14));
-  // Keep focus on the active textarea so typing never stops or loses focus!
-  if(tas[curPage]) tas[curPage].focus();
+  if(tas[curPage]) {
+    tas[curPage].focus();
+    updateTextareaSize(curPage);
+  }
 });
 
-function keep(){ const g=tas[curPage]?ranges[curPage][0]+tas[curPage].selectionStart:0; pending={g, prefer:curPage}; render(); }
+function keep(){ 
+  const g=tas[curPage]?ranges[curPage][0]+tas[curPage].selectionStart:0; 
+  pending={g, prefer:curPage}; 
+  render(); 
+}
 window.addEventListener("resize",layoutScale);
 
 window.addEventListener("beforeunload", e => {
