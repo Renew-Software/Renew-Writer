@@ -91,6 +91,7 @@ let sizeMap = [];
 let ranges = [[0,0]], pending = null, curPage = 0, curScale = 1;
 let sheets = [], editors = [];
 let modified = false, message = "";
+let cachedSelection = null;
 
 const $ = id => document.getElementById(id);
 const pagesEl = $("pages"), scaler = $("scaler"), canvas = $("canvas");
@@ -203,6 +204,38 @@ function setCaretGlobalOffset(targetGlobal) {
   curPage = p;
 }
 
+function captureSelection() {
+  const sel = window.getSelection();
+  if(!sel || !sel.rangeCount || sel.isCollapsed) {
+    cachedSelection = null;
+    return;
+  }
+  for(let i=0; i<editors.length; i++) {
+    const ed = editors[i];
+    if(ed.contains(sel.anchorNode) && ed.contains(sel.focusNode)) {
+      const range = sel.getRangeAt(0);
+      const [pageStart] = ranges[i];
+      
+      const preStart = document.createRange();
+      preStart.selectNodeContents(ed);
+      preStart.setEnd(range.startContainer, range.startOffset);
+      const startIdx = pageStart + preStart.toString().length;
+      
+      const preEnd = document.createRange();
+      preEnd.selectNodeContents(ed);
+      preEnd.setEnd(range.endContainer, range.endOffset);
+      const endIdx = pageStart + preEnd.toString().length;
+      
+      if(startIdx !== endIdx) {
+        cachedSelection = { from: Math.min(startIdx, endIdx), to: Math.max(startIdx, endIdx) };
+      } else {
+        cachedSelection = null;
+      }
+      return;
+    }
+  }
+}
+
 function ensureSheets(n){
   const d=dims();
   while(sheets.length<n){
@@ -231,6 +264,9 @@ function ensureSheets(n){
       pending = { g: s + caretLocal };
       updateStatus();
     });
+
+    ed.addEventListener("mouseup", captureSelection);
+    ed.addEventListener("keyup", captureSelection);
 
     ed.addEventListener("keydown", e => {
       const [s,eRange] = ranges[idx];
@@ -498,38 +534,22 @@ document.addEventListener("keydown",e=>{
 $("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
 $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
 
-$("sizeIn").addEventListener("input", e => {
-  currentTypingSize = Math.max(8, Math.min(48, +e.target.value || 14));
+// Use 'change' event instead of 'input' so it updates smoothly when you finish typing the number or press Enter
+$("sizeIn").addEventListener("change", e => {
+  const newSize = Math.max(8, Math.min(48, +e.target.value || 14));
+  currentTypingSize = newSize;
   
-  const sel = window.getSelection();
-  if(sel && sel.rangeCount > 0 && !sel.isCollapsed) {
-    for(let i=0; i<editors.length; i++) {
-      const ed = editors[i];
-      if(ed.contains(sel.anchorNode) && ed.contains(sel.focusNode)) {
-        const range = sel.getRangeAt(0);
-        const [pageStart] = ranges[i];
-        
-        const preStart = document.createRange();
-        preStart.selectNodeContents(ed);
-        preStart.setEnd(range.startContainer, range.startOffset);
-        const startIdx = pageStart + preStart.toString().length;
-        
-        const preEnd = document.createRange();
-        preEnd.selectNodeContents(ed);
-        preEnd.setEnd(range.endContainer, range.endOffset);
-        const endIdx = pageStart + preEnd.toString().length;
-        
-        ensureSizeMapLength();
-        const from = Math.min(startIdx, endIdx);
-        const to = Math.max(startIdx, endIdx);
-        for(let idx = from; idx < to && idx < sizeMap.length; idx++) {
-          sizeMap[idx] = currentTypingSize;
-        }
-        modified = true;
-        keep();
-        break;
-      }
+  // ONLY resize highlighted text if a valid text range was cached before clicking the input
+  if(cachedSelection) {
+    ensureSizeMapLength();
+    const from = Math.min(cachedSelection.from, cachedSelection.to);
+    const to = Math.max(cachedSelection.from, cachedSelection.to);
+    for(let idx = from; idx < to && idx < sizeMap.length; idx++) {
+      sizeMap[idx] = newSize;
     }
+    modified = true;
+    cachedSelection = null;
+    keep();
   }
 });
 
