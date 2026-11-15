@@ -10,19 +10,17 @@
   box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
 }
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){ --bar:#252525; --fg:#e8e8e8; --mut:#a8a8a8; --bd:#3a3a3a; --ctl:#383838; --canvas:#5a5a5a; --warn:#4a3a10; --warnfg:#ffe9a8; }
+  :root{ --bar:#252525; --fg:#e8e8e8; --mut:#a8a8a8; --bd:#3a3a3a; --ctl:#383838; --canvas:#2a2a2a; --warn:#4a3a10; --warnfg:#ffe9a8; }
 }
-:root[data-theme="dark"]{ --bar:#252525; --fg:#e8e8e8; --mut:#a8a8a8; --bd:#3a3a3a; --ctl:#383838; --canvas:#5a5a5a; --warn:#4a3a10; --warnfg:#ffe9a8; }
 html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 70px); scroll-padding-bottom:50px;}
 body::before{content:""; position:fixed; inset:0 0 auto; height:env(safe-area-inset-top,0px); background:var(--bar); z-index:30;}
 body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}
 #app{min-height:100vh; display:flex; flex-direction:column;}
 .top{position:sticky; top:env(safe-area-inset-top,0px); z-index:20; background:var(--bar); border-bottom:1px solid var(--bd);}
 .bar{display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 12px;}
-.bar select,.bar input[type=number],.bar input[type=text],.bar button{background:var(--ctl); color:var(--fg); border:1px solid var(--bd); border-radius:6px; padding:5px 10px; font:inherit;}
+.bar select,.bar input[type=text],.bar button{background:var(--ctl); color:var(--fg); border:1px solid var(--bd); border-radius:6px; padding:5px 10px; font:inherit;}
 .bar button{cursor:pointer;}
 .bar button:hover{border-color:var(--mut);}
-.bar input[type=number]{width:60px;}
 .bar input[type=text]{width:130px;}
 .bar label{color:var(--mut); font-size:13px;}
 .sep{width:1px; height:20px; background:var(--bd);}
@@ -37,7 +35,7 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
 #canvas{flex:1; background:var(--canvas); padding:20px 0 40px;}
 #scaler{margin:0 auto; transform-origin:top center;}
 .sheet{position:relative; background:#fff; border-radius:2px; box-shadow:0 1px 3px rgba(0,0,0,.35); overflow:hidden;}
-.sheet .editor{position:absolute; inset:0; border:0; outline:0; padding:0; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4; background:transparent; color:#1b1b1b; caret-color:#111;}
+.sheet .editor{position:absolute; inset:0; border:0; outline:0; padding:0; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4; background:transparent; color:#1b1b1b; caret-color:#111; font-size:14px;}
 .status{position:sticky; bottom:env(safe-area-inset-bottom,0px); z-index:20; padding:6px 12px; border-top:1px solid var(--bd); color:var(--mut); font-size:13px; background:var(--bar);}
 </style>
 </head>
@@ -51,7 +49,6 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
       <span class="sep"></span>
       <select id="pageSel" aria-label="Page size"><option value="A4">A4</option><option value="A3">A3</option><option value="A5">A5</option></select>
       <select id="fontSel" aria-label="Font"></select>
-      <label>Size <input id="sizeIn" type="number" min="8" max="48" value="14"> px</label>
     </div>
     <div id="ask"><span>Discard your unsaved changes?</span><button id="askYes">Discard</button><button id="askNo">Cancel</button></div>
   </div>
@@ -86,18 +83,16 @@ const TWIPS = { A3:[16838,23811], A4:[11906,16838], A5:[8391,11906] };
 const ODT_DIMS = { A3: ["297mm", "420mm"], A4: ["210mm", "297mm"], A5: ["148mm", "210mm"] };
 const M = 48, GAP = 24;
 
-let text = "", pageKey = "A4", fontIdx = 2, currentTypingSize = 14;
-let sizeMap = [];
+let text = "", pageKey = "A4", fontIdx = 2;
 let ranges = [[0,0]], pending = null, curPage = 0, curScale = 1;
 let sheets = [], editors = [];
 let modified = false, message = "";
-let cachedSelection = null;
 
 const $ = id => document.getElementById(id);
 const pagesEl = $("pages"), scaler = $("scaler"), canvas = $("canvas");
 
 const meas = document.createElement("div");
-meas.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre-wrap;overflow-wrap:break-word;padding:0;margin:0;border:0;";
+meas.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:pre-wrap;overflow-wrap:break-word;padding:0;margin:0;border:0;font-size:14px;";
 document.body.appendChild(meas);
 
 FONTS.forEach((f,i)=>{ const o=document.createElement("option"); o.value=i; o.textContent=f[0]; $("fontSel").appendChild(o); });
@@ -105,29 +100,18 @@ $("fontSel").value = fontIdx;
 
 function dims(){ const [pw,ph]=SIZES[pageKey]; return {pw, ph, cw:pw-2*M, ch:ph-2*M}; }
 
-function measureString(str, startIndex = 0) {
+function measureString(str){
   meas.style.width = dims().cw + "px";
   meas.style.fontFamily = FONTS[fontIdx][1];
-  let html = "";
-  let i = 0;
-  while(i < str.length) {
-    let sz = sizeMap[startIndex + i] ?? currentTypingSize;
-    let run = "";
-    while(i < str.length && (sizeMap[startIndex + i] ?? currentTypingSize) === sz) {
-      run += str[i];
-      i++;
-    }
-    html += `<span style="font-size:${sz}px">${escapeHtml(run)}</span>`;
-  }
-  meas.innerHTML = html + "\u200b";
+  meas.textContent = str + "\u200b";
   return meas.offsetHeight;
 }
 
 function escapeHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
-function fitCount(rest, maxH, startIndex){
+function fitCount(rest, maxH){
   let lo=0, hi=rest.length;
-  while(lo<hi){ const mid=(lo+hi+1)>>1; if(measureString(rest.slice(0,mid), startIndex)<=maxH) lo=mid; else hi=mid-1; }
+  while(lo<hi){ const mid=(lo+hi+1)>>1; if(measureString(rest.slice(0,mid))<=maxH) lo=mid; else hi=mid-1; }
   let k=Math.max(lo,1);
   if(k<rest.length && !/\s/.test(rest[k-1]) && !/\s/.test(rest[k])){
     for(let j=k-1;j>0;j--){ if(/\s/.test(rest[j-1])){ k=j; break; } }
@@ -140,16 +124,11 @@ function paginate(){
   ranges=[]; let start=0;
   for(;;){
     const rest=text.slice(start);
-    if(measureString(rest, start)<=ch){ ranges.push([start,text.length]); break; }
-    const cut=fitCount(rest, ch, start);
+    if(measureString(rest)<=ch){ ranges.push([start,text.length]); break; }
+    const cut=fitCount(rest, ch);
     ranges.push([start,start+cut]); start+=cut;
     if(start>=text.length){ ranges.push([start,start]); break; }
   }
-}
-
-function ensureSizeMapLength(){
-  while(sizeMap.length < text.length) sizeMap.push(currentTypingSize);
-  if(sizeMap.length > text.length) sizeMap.length = text.length;
 }
 
 function getCaretGlobalOffset(editableEl, pageStart) {
@@ -204,34 +183,6 @@ function setCaretGlobalOffset(targetGlobal) {
   curPage = p;
 }
 
-// Proactively track highlighted text range
-document.addEventListener("selectionchange", () => {
-  const sel = window.getSelection();
-  if(!sel || !sel.rangeCount || sel.isCollapsed) return;
-  for(let i=0; i<editors.length; i++) {
-    const ed = editors[i];
-    if(ed.contains(sel.anchorNode) && ed.contains(sel.focusNode)) {
-      const range = sel.getRangeAt(0);
-      const [pageStart] = ranges[i];
-      
-      const preStart = document.createRange();
-      preStart.selectNodeContents(ed);
-      preStart.setEnd(range.startContainer, range.startOffset);
-      const startIdx = pageStart + preStart.toString().length;
-      
-      const preEnd = document.createRange();
-      preEnd.selectNodeContents(ed);
-      preEnd.setEnd(range.endContainer, range.endOffset);
-      const endIdx = pageStart + preEnd.toString().length;
-      
-      if(startIdx !== endIdx) {
-        cachedSelection = { from: Math.min(startIdx, endIdx), to: Math.max(startIdx, endIdx) };
-      }
-      return;
-    }
-  }
-});
-
 function ensureSheets(n){
   const d=dims();
   while(sheets.length<n){
@@ -241,21 +192,12 @@ function ensureSheets(n){
     
     ed.addEventListener("input",()=>{
       const [s,e]=ranges[idx];
+      const caretGlobalBefore = getCaretGlobalOffset(ed, s);
       const newSub = ed.textContent.replace(/\r\n/g,"\n");
-      const caretLocal = getCaretGlobalOffset(ed, s) - s;
       
       text = text.slice(0,s) + newSub + text.slice(e);
-      
-      // Cleanly sync sizeMap to match new text length without duplication
-      while(sizeMap.length < text.length) {
-        sizeMap.splice(s, 0, currentTypingSize);
-      }
-      while(sizeMap.length > text.length) {
-        sizeMap.splice(s, sizeMap.length - text.length);
-      }
-      
       modified = true;
-      pending = { g: s + caretLocal };
+      pending = { g: caretGlobalBefore };
       updateStatus();
     });
 
@@ -267,21 +209,18 @@ function ensureSheets(n){
       if(e.key === "Enter") {
         e.preventDefault();
         text = text.slice(0, caretGlobal) + "\n" + text.slice(caretGlobal);
-        sizeMap.splice(caretGlobal, 0, currentTypingSize);
         modified = true;
         pending = { g: caretGlobal + 1 };
         render();
       } else if(e.key === "Backspace" && local === 0 && idx > 0) {
         e.preventDefault();
         text = text.slice(0, s-1) + text.slice(s);
-        sizeMap.splice(s-1, 1);
         modified = true;
         pending = { g: s-1 };
         render();
       } else if(e.key === "Delete" && local === (eRange - s) && eRange < text.length) {
         e.preventDefault();
         text = text.slice(0, eRange) + text.slice(eRange+1);
-        sizeMap.splice(eRange, 1);
         modified = true;
         pending = { g: eRange };
         render();
@@ -317,23 +256,12 @@ function updateStatus(){
 }
 
 function render(){
-  ensureSizeMapLength();
   paginate();
   ensureSheets(ranges.length);
   ranges.forEach(([s,e],i)=>{
     const ed=editors[i];
-    let html = "";
-    let idx = s;
-    while(idx < e) {
-      let sz = sizeMap[idx] ?? currentTypingSize;
-      let run = "";
-      while(idx < e && (sizeMap[idx] ?? currentTypingSize) === sz) {
-        run += text[idx];
-        idx++;
-      }
-      html += `<span style="font-size:${sz}px">${escapeHtml(run)}</span>`;
-    }
-    if(ed.innerHTML !== html) ed.innerHTML = html;
+    const sub = text.slice(s,e);
+    if(ed.textContent !== sub) ed.textContent = sub;
   });
   layoutScale();
   if(pending){
@@ -376,27 +304,13 @@ function odtText(xmlStr){
 async function buildDocx(){
   const [w,h]=TWIPS[pageKey]; const font=escapeHtml(FONTS[fontIdx][2]);
   let body="";
-  let charIdx = 0;
   for(const line of text.split("\n")){
     body+="<w:p>";
-    let lineChars = line.split("");
-    let i = 0;
-    while(i < lineChars.length){
-      if(lineChars[i] === "\t"){
-        body+="<w:r><w:tab/></w:r>";
-        i++; charIdx++;
-        continue;
-      }
-      let sz = sizeMap[charIdx] ?? currentTypingSize;
-      let half = Math.round(sz * 0.75 * 2);
-      let runText = "";
-      while(i < lineChars.length && lineChars[i] !== "\t" && (sizeMap[charIdx] ?? currentTypingSize) === sz){
-        runText += lineChars[i];
-        i++; charIdx++;
-      }
-      body+='<w:r><w:rPr><w:rFonts w:ascii="'+font+'" w:hAnsi="'+font+'"/><w:sz w:val="'+half+'"/></w:rPr><w:t xml:space="preserve">'+escapeHtml(runText)+'</w:t></w:r>';
+    if(line === "") {
+      body+="<w:r><w:t/></w:r>";
+    } else {
+      body+='<w:r><w:rPr><w:rFonts w:ascii="'+font+'" w:hAnsi="'+font+'"/><w:sz w:val="28"/></w:rPr><w:t xml:space="preserve">'+escapeHtml(line)+'</w:t></w:r>';
     }
-    charIdx++;
     body+="</w:p>";
   }
   const zip=new JSZip();
@@ -411,41 +325,16 @@ async function buildDocx(){
 async function buildOdt(){
   const font=escapeHtml(FONTS[fontIdx][2]);
   const [pageW, pageH] = ODT_DIMS[pageKey] || ODT_DIMS["A4"];
-  let charIdx = 0;
   let body = "";
   for(const line of text.split("\n")){
-    body += '<text:p text:style-name="P1">';
-    let lineChars = line.split("");
-    let i = 0;
-    while(i < lineChars.length){
-      if(lineChars[i] === "\t"){
-        body += '<text:tab/>';
-        i++; charIdx++;
-        continue;
-      }
-      let sz = sizeMap[charIdx] ?? currentTypingSize;
-      let runText = "";
-      while(i < lineChars.length && lineChars[i] !== "\t" && (sizeMap[charIdx] ?? currentTypingSize) === sz){
-        runText += lineChars[i];
-        i++; charIdx++;
-      }
-      body += '<text:span text:style-name="S_' + sz + '">' + escapeHtml(runText) + '</text:span>';
-    }
-    charIdx++;
-    body += '</text:p>';
-  }
-
-  const uniqueSizes = [...new Set(sizeMap)];
-  let autoStyles = '<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0cm"/></style:style>';
-  for(const sz of uniqueSizes){
-    autoStyles += '<style:style style:name="S_' + sz + '" style:family="text"><style:text-properties fo:font-size="' + (sz * 0.75) + 'pt"/></style:style>';
+    body += '<text:p text:style-name="P1"><text:span text:style-name="S_14">' + escapeHtml(line) + '</text:span></text:p>';
   }
 
   const zip=new JSZip();
   zip.file("mimetype", "application/vnd.oasis.opendocument.text", {compression: "STORE"});
   zip.file("META-INF/manifest.xml", '<?xml version="1.0" encoding="UTF-8"?>\n<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:media-type="application/vnd.oasis.opendocument.text" manifest:full-path="/"/><manifest:file-entry manifest:media-type="text/xml" manifest:full-path="content.xml"/></manifest:manifest>');
   zip.file("styles.xml", '<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.2"><office:automatic-styles><style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="'+pageW+'" fo:page-height="'+pageH+'" fo:margin-top="2cm" fo:margin-bottom="2cm" fo:margin-left="2cm" fo:margin-right="2cm"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"/></office:master-styles></office:document-styles>');
-  zip.file("content.xml", '<?xml version="1.0" encoding="UTF-8"?>\n<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.2"><office:automatic-styles>' + autoStyles + '</office:automatic-styles><office:body><office:text>'+body+'</office:text></office:body></office:document-content>');
+  zip.file("content.xml", '<?xml version="1.0" encoding="UTF-8"?>\n<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.2"><office:automatic-styles><style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0cm"/></style:style><style:style style:name="S_14" style:family="text"><style:text-properties fo:font-size="10.5pt"/></style:style></office:automatic-styles><office:body><office:text>'+body+'</office:text></office:body></office:document-content>');
   return zip.generateAsync({type:"blob",compression:"DEFLATE"});
 }
 
@@ -469,7 +358,7 @@ $("fileIn").addEventListener("change", async e=>{
       else if(ext==="odt") t=odtText(await z.file("content.xml").async("string"));
       else throw new Error("use a .docx, .odt or .txt file");
     }
-    text=t; sizeMap=Array(text.length).fill(currentTypingSize); modified=false; message="Opened "+f.name;
+    text=t; modified=false; message="Opened "+f.name;
     $("nameIn").value=f.name.replace(/\.[^.]+$/,"" );
     pending={g:0}; render();
   }catch(err){ message="Open failed: "+(err&&err.message?err.message:err); updateStatus(); }
@@ -514,6 +403,7 @@ $("dlgSave").onclick=()=>{ $("saveDlg").style.display="none"; const f=document.q
 $("openBtn").onclick=()=>guard(openDlg);
 $("saveBtn").onclick=showSave;
 $("nameIn").addEventListener("input",updateStatus);
+
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape") $("saveDlg").style.display="none";
   if(!(e.ctrlKey||e.metaKey)) return;
@@ -524,24 +414,6 @@ document.addEventListener("keydown",e=>{
 
 $("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
 $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
-
-// Smooth size update on 'change' (when pressing Enter or clicking away from the size box)
-$("sizeIn").addEventListener("change", e => {
-  const newSize = Math.max(8, Math.min(48, +e.target.value || 14));
-  currentTypingSize = newSize;
-  
-  if(cachedSelection) {
-    ensureSizeMapLength();
-    const from = Math.min(cachedSelection.from, cachedSelection.to);
-    const to = Math.max(cachedSelection.from, cachedSelection.to);
-    for(let idx = from; idx < to && idx < sizeMap.length; idx++) {
-      sizeMap[idx] = newSize;
-    }
-    modified = true;
-    cachedSelection = null;
-    keep();
-  }
-});
 
 function keep(){ 
   const ed = editors[curPage];
@@ -555,7 +427,6 @@ window.addEventListener("beforeunload", e => {
   if (modified) { e.preventDefault(); e.returnValue = ""; }
 });
 
-sizeMap = Array(text.length).fill(currentTypingSize);
 render(); editors[0].focus();
 </script>
 </body>
