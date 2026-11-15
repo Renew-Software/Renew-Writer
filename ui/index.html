@@ -204,12 +204,10 @@ function setCaretGlobalOffset(targetGlobal) {
   curPage = p;
 }
 
-function captureSelection() {
+// Proactively track highlighted text range
+document.addEventListener("selectionchange", () => {
   const sel = window.getSelection();
-  if(!sel || !sel.rangeCount || sel.isCollapsed) {
-    cachedSelection = null;
-    return;
-  }
+  if(!sel || !sel.rangeCount || sel.isCollapsed) return;
   for(let i=0; i<editors.length; i++) {
     const ed = editors[i];
     if(ed.contains(sel.anchorNode) && ed.contains(sel.focusNode)) {
@@ -228,13 +226,11 @@ function captureSelection() {
       
       if(startIdx !== endIdx) {
         cachedSelection = { from: Math.min(startIdx, endIdx), to: Math.max(startIdx, endIdx) };
-      } else {
-        cachedSelection = null;
       }
       return;
     }
   }
-}
+});
 
 function ensureSheets(n){
   const d=dims();
@@ -246,27 +242,22 @@ function ensureSheets(n){
     ed.addEventListener("input",()=>{
       const [s,e]=ranges[idx];
       const newSub = ed.textContent.replace(/\r\n/g,"\n");
-      const oldSub = text.slice(s,e);
       const caretLocal = getCaretGlobalOffset(ed, s) - s;
       
       text = text.slice(0,s) + newSub + text.slice(e);
-      const insertedLen = newSub.length - oldSub.length;
       
-      ensureSizeMapLength();
-      if(insertedLen > 0) {
-        const newSizes = Array(insertedLen).fill(currentTypingSize);
-        sizeMap.splice(s + caretLocal - insertedLen, 0, ...newSizes);
-      } else if(insertedLen < 0) {
-        sizeMap.splice(s + caretLocal, -insertedLen);
+      // Cleanly sync sizeMap to match new text length without duplication
+      while(sizeMap.length < text.length) {
+        sizeMap.splice(s, 0, currentTypingSize);
+      }
+      while(sizeMap.length > text.length) {
+        sizeMap.splice(s, sizeMap.length - text.length);
       }
       
       modified = true;
       pending = { g: s + caretLocal };
       updateStatus();
     });
-
-    ed.addEventListener("mouseup", captureSelection);
-    ed.addEventListener("keyup", captureSelection);
 
     ed.addEventListener("keydown", e => {
       const [s,eRange] = ranges[idx];
@@ -534,12 +525,11 @@ document.addEventListener("keydown",e=>{
 $("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
 $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
 
-// Use 'change' event instead of 'input' so it updates smoothly when you finish typing the number or press Enter
+// Smooth size update on 'change' (when pressing Enter or clicking away from the size box)
 $("sizeIn").addEventListener("change", e => {
   const newSize = Math.max(8, Math.min(48, +e.target.value || 14));
   currentTypingSize = newSize;
   
-  // ONLY resize highlighted text if a valid text range was cached before clicking the input
   if(cachedSelection) {
     ensureSizeMapLength();
     const from = Math.min(cachedSelection.from, cachedSelection.to);
