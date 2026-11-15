@@ -271,8 +271,15 @@ function ensureSheets(n){
       
       text = text.slice(0,s) + newSub + text.slice(e);
       modified = true;
-      pending = { g: caretGlobalBefore, top: false };
-      render();
+      
+      // Trigger pagination instantly if height overflows the page limit or text length changed boundary
+      if (ed.scrollHeight > ed.clientHeight || text.slice(s, e).length !== newSub.length) {
+        pending = { g: caretGlobalBefore, top: false };
+        render();
+      } else {
+        updateStatus();
+        scrollCursorIntoView(false);
+      }
     });
 
     ed.addEventListener("keydown", e => {
