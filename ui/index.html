@@ -140,7 +140,7 @@ function getCaretGlobalOffset(editableEl, pageStart) {
   return pageStart + preRange.toString().length;
 }
 
-function setCaretGlobalOffset(targetGlobal) {
+function setCaretGlobalOffset(targetGlobal, isTop = false) {
   let p = ranges.findIndex(([s,e]) => targetGlobal >= s && targetGlobal <= e);
   if (p < 0) p = ranges.length - 1;
   const [s, e] = ranges[p];
@@ -181,17 +181,79 @@ function setCaretGlobalOffset(targetGlobal) {
   sel.removeAllRanges();
   sel.addRange(range);
   curPage = p;
-  scrollCursorIntoView();
+  scrollCursorIntoView(isTop);
 }
 
-function scrollCursorIntoView() {
+function setGlobalSelectionRange(startG, endG) {
+  startG = Math.max(0, Math.min(startG, text.length));
+  endG = Math.max(0, Math.min(endG, text.length));
+  const minG = Math.min(startG, endG);
+  const maxG = Math.max(startG, endG);
+  
+  let pStart = ranges.findIndex(([s,e]) => minG >= s && minG <= e);
+  if (pStart < 0) pStart = 0;
+  let pEnd = ranges.findIndex(([s,e]) => maxG >= s && maxG <= e);
+  if (pEnd < 0) pEnd = ranges.length - 1;
+  
+  const edStart = editors[pStart];
+  const edEnd = editors[pEnd];
+  if (!edStart || !edEnd) return;
+  
+  edStart.focus();
+  const range = document.createRange();
+  
+  function getNodeAndOffset(editor, pageStart, globalIdx) {
+    const local = globalIdx - pageStart;
+    let charCount = 0;
+    let result = { node: editor, offset: 0 };
+    let found = false;
+    function traverse(node) {
+      if (found) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const len = node.nodeValue.length;
+        if (charCount + len >= local) {
+          result = { node: node, offset: local - charCount };
+          found = true;
+        } else {
+          charCount += len;
+        }
+      } else {
+        if (node.childNodes.length === 0) {
+          result = { node: node, offset: 0 };
+        }
+        for (let child of node.childNodes) {
+          traverse(child);
+          if (found) return;
+        }
+      }
+    }
+    traverse(editor);
+    return result;
+  }
+  
+  const startPos = getNodeAndOffset(edStart, ranges[pStart][0], minG);
+  const endPos = getNodeAndOffset(edEnd, ranges[pEnd][0], maxG);
+  
+  try {
+    range.setStart(startPos.node, startPos.offset);
+    range.setEnd(endPos.node, endPos.offset);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch(err) {}
+}
+
+function scrollCursorIntoView(isTop = false) {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const node = sel.anchorNode;
   if (!node) return;
-  const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-  if (el) {
-    el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const ed = node.nodeType === Node.ELEMENT_NODE ? node.closest('.editor') : node.parentElement.closest('.editor');
+  if (ed) {
+    const sheet = ed.closest('.sheet');
+    if (sheet) {
+      sheet.scrollIntoView({ behavior: "smooth", block: isTop ? "start" : "nearest" });
+    }
   }
 }
 
@@ -209,9 +271,9 @@ function ensureSheets(n){
       
       text = text.slice(0,s) + newSub + text.slice(e);
       modified = true;
-      pending = { g: caretGlobalBefore };
+      pending = { g: caretGlobalBefore, top: false };
       updateStatus();
-      scrollCursorIntoView();
+      scrollCursorIntoView(false);
     });
 
     ed.addEventListener("keydown", e => {
@@ -219,23 +281,23 @@ function ensureSheets(n){
       const caretGlobal = getCaretGlobalOffset(ed, s);
       const local = caretGlobal - s;
 
-      if(e.key === "Enter") {
+      if(e.shiftKey && e.key === "ArrowUp") {
         e.preventDefault();
-        text = text.slice(0, caretGlobal) + "\n" + text.slice(caretGlobal);
-        modified = true;
-        pending = { g: caretGlobal + 1 };
-        render();
+        setGlobalSelectionRange(caretGlobal, 0);
+      } else if(e.shiftKey && e.key === "ArrowDown") {
+        e.preventDefault();
+        setGlobalSelectionRange(caretGlobal, text.length);
       } else if(e.key === "Backspace" && local === 0 && idx > 0) {
         e.preventDefault();
         text = text.slice(0, s-1) + text.slice(s);
         modified = true;
-        pending = { g: s-1 };
+        pending = { g: s-1, top: true };
         render();
       } else if(e.key === "Delete" && local === (eRange - s) && eRange < text.length) {
         e.preventDefault();
         text = text.slice(0, eRange) + text.slice(eRange+1);
         modified = true;
-        pending = { g: eRange };
+        pending = { g: eRange, top: false };
         render();
       }
     });
@@ -279,8 +341,9 @@ function render(){
   layoutScale();
   if(pending){
     const targetG = Math.min(pending.g, text.length);
+    const isTop = pending.top;
     pending = null;
-    setCaretGlobalOffset(targetG);
+    setCaretGlobalOffset(targetG, isTop);
   }
   updateStatus();
 }
@@ -373,7 +436,7 @@ $("fileIn").addEventListener("change", async e=>{
     }
     text=t; modified=false; message="Opened "+f.name;
     $("nameIn").value=f.name.replace(/\.[^.]+$/,"" );
-    pending={g:0}; render();
+    pending={g:0, top:true}; render();
   }catch(err){ message="Open failed: "+(err&&err.message?err.message:err); updateStatus(); }
 });
 
@@ -431,7 +494,7 @@ $("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
 function keep(){ 
   const ed = editors[curPage];
   const g = ed ? getCaretGlobalOffset(ed, ranges[curPage][0]) : 0;
-  pending = { g, prefer: curPage }; 
+  pending = { g, top: false }; 
   render(); 
 }
 window.addEventListener("resize",layoutScale);
