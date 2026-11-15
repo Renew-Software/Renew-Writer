@@ -272,7 +272,9 @@ function ensureSheets(n){
       text = text.slice(0,s) + newSub + text.slice(e);
       modified = true;
       
-      if (ed.scrollHeight > ed.clientHeight || text.slice(s, e).length !== newSub.length) {
+      const {ch} = dims();
+      // If the current page text height exceeds the page height limit `ch`, trigger pagination immediately
+      if (measureString(newSub) > ch || text.slice(s, e).length !== newSub.length) {
         pending = { g: caretGlobalBefore, top: false };
         render();
       } else {
