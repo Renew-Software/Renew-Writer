@@ -38,6 +38,7 @@ body{margin:0; background:var(--canvas); color:var(--fg); font:14px/1.4 system-u
 #scaler{margin:0 auto; transform-origin:top center;}
 .sheet{position:relative; background:#fff; border-radius:2px; box-shadow:0 1px 3px rgba(0,0,0,.35); overflow:hidden;}
 .sheet .editor{position:absolute; inset:0; border:0; outline:0; padding:0; margin:0; white-space:pre-wrap; overflow-wrap:break-word; tab-size:4; background:transparent; color:#1b1b1b; caret-color:#111;}
+.sheet .editor p { margin: 0; }
 .status{position:sticky; bottom:env(safe-area-inset-bottom,0px); z-index:20; padding:6px 12px; border-top:1px solid var(--bd); color:var(--mut); font-size:13px; background:var(--bar);}
 </style>
 </head>
@@ -86,9 +87,10 @@ const TWIPS = { A3:[16838,23811], A4:[11906,16838], A5:[8391,11906] };
 const ODT_DIMS = { A3: ["297mm", "420mm"], A4: ["210mm", "297mm"], A5: ["148mm", "210mm"] };
 const M = 48, GAP = 24;
 
-let text = "", pageKey = "A4", fontIdx = 2, currentTypingSize = 14;
-let sizeMap = [];
-let ranges = [[0,0]], pending = null, curPage = 0, curScale = 1;
+let lines = [""]; // Array of line strings
+let lineSizes = [14]; // Array of font sizes per line
+let pageKey = "A4", fontIdx = 2, currentTypingSize = 14;
+let ranges = [[0,0]], curPage = 0, curScale = 1;
 let sheets = [], editors = [];
 let modified = false, message = "";
 
@@ -104,103 +106,41 @@ $("fontSel").value = fontIdx;
 
 function dims(){ const [pw,ph]=SIZES[pageKey]; return {pw, ph, cw:pw-2*M, ch:ph-2*M}; }
 
-function measureString(str, startIndex = 0) {
+function measureLines() {
   meas.style.width = dims().cw + "px";
   meas.style.fontFamily = FONTS[fontIdx][1];
-  let html = "";
-  let i = 0;
-  while(i < str.length) {
-    let sz = sizeMap[startIndex + i] ?? currentTypingSize;
-    let run = "";
-    while(i < str.length && (sizeMap[startIndex + i] ?? currentTypingSize) === sz) {
-      run += str[i];
-      i++;
-    }
-    html += `<span style="font-size:${sz}px">${escapeHtml(run)}</span>`;
+  let totalH = 0;
+  for(let i=0; i<lines.length; i++) {
+    let sz = lineSizes[i] || currentTypingSize;
+    meas.style.fontSize = sz + "px";
+    meas.textContent = (lines[i] || "") + "\u200b";
+    totalH += meas.offsetHeight;
   }
-  meas.innerHTML = html + "\u200b";
-  return meas.offsetHeight;
-}
-
-function escapeHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
-
-function fitCount(rest, maxH, startIndex){
-  let lo=0, hi=rest.length;
-  while(lo<hi){ const mid=(lo+hi+1)>>1; if(measureString(rest.slice(0,mid), startIndex)<=maxH) lo=mid; else hi=mid-1; }
-  let k=Math.max(lo,1);
-  if(k<rest.length && !/\s/.test(rest[k-1]) && !/\s/.test(rest[k])){
-    for(let j=k-1;j>0;j--){ if(/\s/.test(rest[j-1])){ k=j; break; } }
-  }
-  return k;
+  return totalH;
 }
 
 function paginate(){
   const {ch}=dims();
-  ranges=[]; let start=0;
-  for(;;){
-    const rest=text.slice(start);
-    if(measureString(rest, start)<=ch){ ranges.push([start,text.length]); break; }
-    const cut=fitCount(rest, ch, start);
-    ranges.push([start,start+cut]); start+=cut;
-    if(start>=text.length){ ranges.push([start,start]); break; }
-  }
-}
-
-function ensureSizeMapLength(){
-  while(sizeMap.length < text.length) sizeMap.push(currentTypingSize);
-  if(sizeMap.length > text.length) sizeMap.length = text.length;
-}
-
-function getCaretGlobalOffset(editableEl, pageStart) {
-  const sel = window.getSelection();
-  if (!sel.rangeCount || !editableEl.contains(sel.anchorNode)) return pageStart;
-  const preRange = document.createRange();
-  preRange.selectNodeContents(editableEl);
-  preRange.setEnd(sel.anchorNode, sel.anchorOffset);
-  return pageStart + preRange.toString().length;
-}
-
-function setCaretGlobalOffset(targetGlobal) {
-  let p = ranges.findIndex(([s,e]) => targetGlobal >= s && targetGlobal <= e);
-  if (p < 0) p = ranges.length - 1;
-  const [s, e] = ranges[p];
-  const localTarget = targetGlobal - s;
-  const editor = editors[p];
-  if (!editor) return;
-
-  editor.focus();
-  const range = document.createRange();
-  let charCount = 0;
-  let found = false;
-
-  function traverse(node) {
-    if (found) return;
-    if (node.nodeType === Node.TEXT_NODE) {
-      const len = node.nodeValue.length;
-      if (charCount + len >= localTarget) {
-        range.setStart(node, localTarget - charCount);
-        range.collapse(true);
-        found = true;
-      } else {
-        charCount += len;
-      }
-    } else {
-      for (let child of node.childNodes) {
-        traverse(child);
-        if (found) return;
-      }
+  ranges=[]; let startLine=0;
+  while(startLine < lines.length) {
+    let curH = 0;
+    let endLine = startLine;
+    meas.style.width = dims().cw + "px";
+    meas.style.fontFamily = FONTS[fontIdx][1];
+    while(endLine < lines.length) {
+      let sz = lineSizes[endLine] || currentTypingSize;
+      meas.style.fontSize = sz + "px";
+      meas.textContent = (lines[endLine] || "") + "\u200b";
+      let h = meas.offsetHeight;
+      if(endLine > startLine && curH + h > ch) break;
+      curH += h;
+      endLine++;
     }
+    if(endLine === startLine) endLine++; // ensure progress
+    ranges.push([startLine, endLine]);
+    startLine = endLine;
   }
-
-  traverse(editor);
-  if (!found) {
-    range.selectNodeContents(editor);
-    range.collapse(false);
-  }
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
-  curPage = p;
+  if(ranges.length === 0) ranges.push([0, lines.length]);
 }
 
 function ensureSheets(n){
@@ -211,26 +151,26 @@ function ensureSheets(n){
     const idx=sheets.length;
     
     ed.addEventListener("input",()=>{
-      const [s,e]=ranges[idx];
-      const newSub = ed.innerText.replace(/\r\n/g,"\n");
-      const oldSub = text.slice(s,e);
-      const caretLocal = getCaretGlobalOffset(ed, s) - s;
+      const [startL, endL] = ranges[idx];
+      const htmlParagraphs = Array.from(ed.querySelectorAll("p, div")).map(el => el.innerText.replace(/\r\n/g,"\n"));
+      let newPageLines = htmlParagraphs.length > 0 ? htmlParagraphs : [ed.innerText.replace(/\r\n/g,"\n")];
       
-      text = text.slice(0,s) + newSub + text.slice(e);
-      const insertedLen = newSub.length - oldSub.length;
-      
-      if(insertedLen > 0) {
-        const newSizes = Array(insertedLen).fill(currentTypingSize);
-        sizeMap.splice(s + caretLocal - insertedLen, 0, ...newSizes);
-      } else if(insertedLen < 0) {
-        sizeMap.splice(s + caretLocal, -insertedLen);
-      }
+      // Update lines array
+      lines.splice(startL, endL - startL, ...newPageLines);
+      while(lineSizes.length < lines.length) lineSizes.push(currentTypingSize);
       
       modified = true;
       updateStatus();
     });
 
-    ed.addEventListener("keydown",e=>onEditorKey(e,idx));
+    ed.addEventListener("keydown", e => {
+      if(e.key === "Enter") {
+        modified = true;
+      } else if(e.key === "Backspace") {
+        modified = true;
+      }
+    });
+
     ed.addEventListener("focus",()=>{ curPage=editors.indexOf(ed); updateStatus(); });
     sh.appendChild(ed); pagesEl.appendChild(sh);
     sheets.push(sh); editors.push(ed);
@@ -253,98 +193,41 @@ function layoutScale(){
 
 function fileName(){ return ($("nameIn").value.trim()||"document"); }
 function updateStatus(){
-  const words=(text.match(/\S+/g)||[]).length;
+  const fullText = lines.join("\n");
+  const words=(fullText.match(/\S+/g)||[]).length;
   $("status").textContent="Page "+(Math.min(curPage,ranges.length-1)+1)+" of "+ranges.length+" \u00b7 "+words+" words"+(message?" \u00b7 "+message:"");
   document.title=(modified?"*":"")+fileName()+" - R-Writer";
 }
 
 function render(){
-  ensureSizeMapLength();
+  while(lineSizes.length < lines.length) lineSizes.push(currentTypingSize);
   paginate();
   ensureSheets(ranges.length);
-  ranges.forEach(([s,e],i)=>{
+  ranges.forEach(([startL,endL],i)=>{
     const ed=editors[i];
     let html = "";
-    let idx = s;
-    while(idx < e) {
-      let sz = sizeMap[idx] ?? currentTypingSize;
-      let run = "";
-      while(idx < e && (sizeMap[idx] ?? currentTypingSize) === sz) {
-        run += text[idx];
-        idx++;
-      }
-      html += `<span style="font-size:${sz}px">${escapeHtml(run)}</span>`;
+    for(let l=startL; l<endL; l++) {
+      let sz = lineSizes[l] || currentTypingSize;
+      let txt = lines[l] !== undefined ? lines[l] : "";
+      html += `<p style="font-size:${sz}px">${escapeHtml(txt)}</p>`;
     }
     if(ed.innerHTML !== html) ed.innerHTML = html;
   });
   layoutScale();
-  if(pending){
-    const targetG = Math.min(pending.g, text.length);
-    pending = null;
-    setCaretGlobalOffset(targetG);
-  }
   updateStatus();
 }
 
-function onEditorKey(ev,i){
-  const ed=editors[i];
-  const [s,e]=ranges[i];
-  const caretGlobal = getCaretGlobalOffset(ed, s);
-  const local = caretGlobal - s;
-  const n = ranges.length;
-
-  if(ev.key === "Enter"){
-    ev.preventDefault();
-    text = text.slice(0, caretGlobal) + "\n" + text.slice(caretGlobal);
-    sizeMap.splice(caretGlobal, 0, currentTypingSize);
-    modified = true;
-    pending = { g: caretGlobal + 1 };
-    render();
-    return;
-  }
-
-  if(ev.key === "Backspace" && local === 0 && i > 0){
-    ev.preventDefault();
-    text = text.slice(0, s-1) + text.slice(s);
-    sizeMap.splice(s-1, 1);
-    modified = true;
-    pending = { g: s-1 };
-    render();
-  } else if(ev.key === "Delete" && local === (e - s) && e < text.length){
-    ev.preventDefault();
-    text = text.slice(0, e) + text.slice(e+1);
-    sizeMap.splice(e, 1);
-    modified = true;
-    pending = { g: e };
-    render();
-  }
-}
+function escapeHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
 /* ---------- file formats & saving ---------- */
 async function buildDocx(){
   const [w,h]=TWIPS[pageKey]; const font=escapeHtml(FONTS[fontIdx][2]);
   let body="";
-  let charIdx = 0;
-  for(const line of text.split("\n")){
+  for(let i=0; i<lines.length; i++){
     body+="<w:p>";
-    let lineChars = line.split("");
-    let i = 0;
-    while(i < lineChars.length){
-      if(lineChars[i] === "\t"){
-        body+="<w:r><w:tab/></w:r>";
-        i++; charIdx++;
-        continue;
-      }
-      let sz = sizeMap[charIdx] ?? currentTypingSize;
-      let half = Math.round(sz * 0.75 * 2);
-      let runText = "";
-      while(i < lineChars.length && lineChars[i] !== "\t" && (sizeMap[charIdx] ?? currentTypingSize) === sz){
-        runText += lineChars[i];
-        i++; charIdx++;
-      }
-      body+='<w:r><w:rPr><w:rFonts w:ascii="'+font+'" w:hAnsi="'+font+'"/><w:sz w:val="'+half+'"/></w:rPr><w:t xml:space="preserve">'+escapeHtml(runText)+'</w:t></w:r>';
-    }
-    charIdx++;
+    let sz = lineSizes[i] || currentTypingSize;
+    let half = Math.round(sz * 0.75 * 2);
+    body+='<w:r><w:rPr><w:rFonts w:ascii="'+font+'" w:hAnsi="'+font+'"/><w:sz w:val="'+half+'"/></w:rPr><w:t xml:space="preserve">'+escapeHtml(lines[i])+'</w:t></w:r>';
     body+="</w:p>";
   }
   const zip=new JSZip();
@@ -357,34 +240,16 @@ async function buildDocx(){
 async function buildOdt(){
   const font=escapeHtml(FONTS[fontIdx][2]);
   const [pageW, pageH] = ODT_DIMS[pageKey] || ODT_DIMS["A4"];
-  let charIdx = 0;
   let body = "";
-  for(const line of text.split("\n")){
-    body += '<text:p text:style-name="P1">';
-    let lineChars = line.split("");
-    let i = 0;
-    while(i < lineChars.length){
-      if(lineChars[i] === "\t"){
-        body += '<text:tab/>';
-        i++; charIdx++;
-        continue;
-      }
-      let sz = sizeMap[charIdx] ?? currentTypingSize;
-      let runText = "";
-      while(i < lineChars.length && lineChars[i] !== "\t" && (sizeMap[charIdx] ?? currentTypingSize) === sz){
-        runText += lineChars[i];
-        i++; charIdx++;
-      }
-      body += '<text:span text:style-name="S_' + sz + '">' + escapeHtml(runText) + '</text:span>';
-    }
-    charIdx++;
-    body += '</text:p>';
+  for(let i=0; i<lines.length; i++){
+    let sz = lineSizes[i] || currentTypingSize;
+    body += '<text:p text:style-name="S_' + sz + '">' + escapeHtml(lines[i]) + '</text:p>';
   }
 
-  const uniqueSizes = [...new Set(sizeMap)];
-  let autoStyles = '<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0cm"/></style:style>';
+  const uniqueSizes = [...new Set(lineSizes)];
+  let autoStyles = '';
   for(const sz of uniqueSizes){
-    autoStyles += '<style:style style:name="S_' + sz + '" style:family="text"><style:text-properties fo:font-size="' + (sz * 0.75) + 'pt"/></style:style>';
+    autoStyles += '<style:style style:name="S_' + sz + '" style:family="paragraph"><style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0cm"/><style:text-properties fo:font-size="' + (sz * 0.75) + 'pt"/></style:style>';
   }
 
   const zip=new JSZip();
@@ -415,9 +280,9 @@ $("fileIn").addEventListener("change", async e=>{
       else if(ext==="odt") t=odtText(await z.file("content.xml").async("string"));
       else throw new Error("use a .docx, .odt or .txt file");
     }
-    text=t; sizeMap=Array(text.length).fill(currentTypingSize); modified=false; message="Opened "+f.name;
+    lines=t.split("\n"); lineSizes=Array(lines.length).fill(currentTypingSize); modified=false; message="Opened "+f.name;
     $("nameIn").value=f.name.replace(/\.[^.]+$/,"" );
-    pending={g:0}; render();
+    render();
   }catch(err){ message="Open failed: "+(err&&err.message?err.message:err); updateStatus(); }
 });
 
@@ -439,7 +304,7 @@ async function save(fmt){
       blob = await buildOdt();
       fname = fileName() + ".odt";
     } else if(fmt === "txt"){
-      blob = new Blob([text], {type: "text/plain;charset=utf-8"});
+      blob = new Blob([lines.join("\n")], {type: "text/plain;charset=utf-8"});
       fname = fileName() + ".txt";
     } else {
       blob = await buildDocx();
@@ -468,25 +333,18 @@ document.addEventListener("keydown",e=>{
   else if(k==="o"){ e.preventDefault(); guard(openDlg); }
 });
 
-$("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; keep(); });
-$("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; keep(); });
+$("pageSel").addEventListener("change",e=>{ pageKey=e.target.value; render(); });
+$("fontSel").addEventListener("change",e=>{ fontIdx=+e.target.value; render(); });
 $("sizeIn").addEventListener("input",e=>{
   currentTypingSize = Math.max(8, Math.min(48, +e.target.value || 14));
-  if(editors[curPage]) editors[curPage].focus();
 });
-function keep(){ 
-  const ed = editors[curPage];
-  const g = ed ? getCaretGlobalOffset(ed, ranges[curPage][0]) : 0;
-  pending = { g }; 
-  render(); 
-}
 window.addEventListener("resize",layoutScale);
 
 window.addEventListener("beforeunload", e => {
   if (modified) { e.preventDefault(); e.returnValue = ""; }
 });
 
-sizeMap = Array(text.length).fill(currentTypingSize);
+lineSizes = Array(lines.length).fill(currentTypingSize);
 render(); editors[0].focus();
 </script>
 </body>
