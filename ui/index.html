@@ -181,6 +181,18 @@ function setCaretGlobalOffset(targetGlobal) {
   sel.removeAllRanges();
   sel.addRange(range);
   curPage = p;
+  scrollCursorIntoView();
+}
+
+function scrollCursorIntoView() {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const node = sel.anchorNode;
+  if (!node) return;
+  const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 }
 
 function ensureSheets(n){
@@ -199,6 +211,7 @@ function ensureSheets(n){
       modified = true;
       pending = { g: caretGlobalBefore };
       updateStatus();
+      scrollCursorIntoView();
     });
 
     ed.addEventListener("keydown", e => {
