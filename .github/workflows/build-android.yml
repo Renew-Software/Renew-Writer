@@ -1,0 +1,114 @@
+name: Build R-Writer (Android)
+
+# Builds a signed, installable Android APK (arm64 + 32-bit ARM phones).
+#
+# Optional: to sign with your OWN key (recommended for releases, so updates install over
+# older versions) add these repository secrets:
+#   ANDROID_KEYSTORE_BASE64    your .jks keystore, base64-encoded
+#   ANDROID_KEYSTORE_PASSWORD  keystore + key password
+#   ANDROID_KEY_ALIAS          key alias inside the keystore
+# Without them the APK is signed with a throw-away key made during the build: it installs
+# fine, but a later build can't update it (uninstall first).
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to attach the APK to a GitHub Release
+    env:
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Bundle JSZip locally for offline use
+        run: curl -sL https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js -o ui/jszip.min.js
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools, platform and NDK
+        run: |
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Install Rust stable toolchain (with Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cache Tauri CLI
+        id: tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-v2-${{ runner.os }}
+
+      - name: Install Tauri CLI
+        if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2.0.0" --locked
+
+      - name: Create the Android project
+        run: |
+          cargo tauri android init --ci
+          cargo tauri icon src-tauri/icons/icon.png
+
+      - name: Build release APK (unsigned)
+        run: cargo tauri android build --apk --target aarch64 armv7
+
+      - name: Align and sign the APK
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          APK=$(find src-tauri/gen/android -name '*unsigned*.apk' | head -1)
+          if [ -z "$APK" ]; then echo "No APK found:"; find src-tauri/gen/android -name '*.apk'; exit 1; fi
+          echo "Signing $APK with build-tools $(basename "$BT")"
+
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            KS="$RUNNER_TEMP/release.jks"; PASS="$KEYSTORE_PASSWORD"; ALIAS="$KEY_ALIAS"
+          else
+            echo "::warning::No signing secrets set - signing with a throw-away key. The APK installs, but cannot be updated by a later build."
+            KS="$RUNNER_TEMP/ci.jks"; PASS="android"; ALIAS="rwriter"
+            keytool -genkeypair -keystore "$KS" -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$PASS" -keypass "$PASS" -dname "CN=R-Writer"
+          fi
+
+          "$BT/zipalign" -p -f 4 "$APK" "$RUNNER_TEMP/aligned.apk"
+          mkdir -p dist
+          OUT="dist/R-Writer_${VERSION}_android.apk"
+          "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$PASS" --key-pass "pass:$PASS" --ks-key-alias "$ALIAS" --out "$OUT" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify --print-certs "$OUT"
+          ls -la dist
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: r-writer-android-apk
+          path: dist/*.apk
+
+      - name: Attach APK to GitHub Release (on tag push)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
